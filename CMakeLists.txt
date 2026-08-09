@@ -36,6 +36,7 @@ target_include_directories(qlanmsg PRIVATE src)
 target_link_libraries(qlanmsg PRIVATE Qt6::Widgets Qt6::Network)
 
 if(WIN32)
+    set_target_properties(qlanmsg PROPERTIES WIN32_EXECUTABLE TRUE)
     target_link_libraries(qlanmsg PRIVATE user32 gdi32)
 elseif(UNIX AND NOT APPLE)
     find_package(X11 REQUIRED)
