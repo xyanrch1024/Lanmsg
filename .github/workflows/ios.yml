@@ -27,13 +27,30 @@ jobs:
 
       - name: Build (simulator, unsigned)
         working-directory: ios
+        shell: bash
         run: |
+          set +e
           xcodebuild build \
             -project QLanMsg.xcodeproj \
             -scheme QLanMsg \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath ../build/ios \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee ../build/ios_build.log
+          status=${PIPESTATUS[0]}
+          exit $status
+
+      - name: Surface compile errors
+        if: failure()
+        run: |
+          grep -nE "error:" build/ios_build.log | head -80 | sed 's/^/::error::/' || true
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: build/ios_build.log
+          if-no-files-found: ignore
 
       - name: Run unit tests
         working-directory: ios
