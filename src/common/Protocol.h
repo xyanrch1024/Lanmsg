@@ -13,6 +13,7 @@ namespace qlm {
 
 constexpr quint16 kUdpPort = 24260;
 constexpr quint16 kTcpPort = 24261;
+constexpr const char *kMulticastGroup = "239.255.77.77";
 constexpr int kDiscoveryIntervalMs = 3000;
 constexpr int kPeerTimeoutMs = 10000;
 constexpr quint32 kFrameHeaderSize = 12; // totalLen(4) + msgType(4) + jsonLen(4)

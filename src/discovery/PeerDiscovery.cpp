@@ -27,6 +27,14 @@ PeerDiscovery::PeerDiscovery(QObject *parent)
     , m_cleanupTimer(new QTimer(this)) {
     m_socket->bind(QHostAddress::AnyIPv4, qlm::kUdpPort,
                    QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
+    // Multicast lets multiple instances on the same host (which share the UDP
+    // port via SO_REUSEADDR) all receive discovery. On Windows, unicast and
+    // broadcast to a shared port are delivered to a single socket only,
+    // multicast is delivered to every joined member. Failure is non-fatal:
+    // the LAN broadcast path still works across machines.
+    const QHostAddress group(QLatin1String(qlm::kMulticastGroup));
+    if (!m_socket->joinMulticastGroup(group))
+        qWarning() << "joinMulticastGroup failed:" << m_socket->errorString();
     const int fd = static_cast<int>(m_socket->socketDescriptor());
     if (fd >= 0) {
         int one = 1;
@@ -75,6 +83,9 @@ QByteArray PeerDiscovery::packet() const {
 void PeerDiscovery::broadcast() {
     QByteArray data = packet();
     m_socket->writeDatagram(data, QHostAddress(QStringLiteral("255.255.255.255")), qlm::kUdpPort);
+    // multicast: required for same-host multi-instance (shared UDP port), also
+    // covers broadcast-isolated networks
+    m_socket->writeDatagram(data, QHostAddress(QLatin1String(qlm::kMulticastGroup)), qlm::kUdpPort);
 
     // unicast to known peers too: helps with NAT'd / isolated broadcast domains (e.g. WSL2)
     const auto keys = m_peers.keys();
