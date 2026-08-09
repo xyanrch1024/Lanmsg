@@ -78,6 +78,7 @@ TransferWidget::TransferWidget(QWidget *parent)
     , m_refreshTimer(new QTimer(this)) {
     setSelectionMode(QAbstractItemView::SingleSelection);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setSpacing(4);
 
     // Keep ETA ticking and reflect stalls even between chunk callbacks.
     m_refreshTimer->setInterval(1000);
@@ -112,12 +113,18 @@ void TransferWidget::addItem(const TransferItem &item) {
     lay->addLayout(texts, 1);
     lay->addWidget(bar, 4);
     lay->addWidget(cancel);
-    setItemWidget(it, w);
 
     const QString arrow = item.direction == TransferDirection::Send ? QStringLiteral("→") : QStringLiteral("←");
     label->setText(QStringLiteral("%1 %2 %3").arg(item.peerName, arrow, item.name));
     detail->setText(QStringLiteral("0 B"));
     cancel->setEnabled(item.done < item.total || item.total == 0);
+
+    // Keep the widget at its natural size and pin the row height to it, so a
+    // row's content never overflows into (and gets covered by) the row below.
+    lay->setSizeConstraint(QLayout::SetFixedSize);
+    it->setSizeHint(w->sizeHint());
+    setItemWidget(it, w);
+    it->setSizeHint(w->sizeHint());
 
     connect(cancel, &QPushButton::clicked, this, [this, token = item.token] { emit cancelRequested(token); });
 }
