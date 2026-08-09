@@ -270,7 +270,7 @@ private final class RemoteSurfaceView: UIView {
 
         if wasTwo && activeTouches.count == 0 && twoFingerTap {
             // two-finger tap -> middle click
-            if let point = mappedPoint(for: touches.first!) {
+            if let touch = touches.first, let point = mappedPoint(for: touch.location(in: self)) {
                 controller.mouseButton(2, down: true, x: point.x, y: point.y)
                 controller.mouseButton(2, down: false, x: point.x, y: point.y)
             }
@@ -281,7 +281,7 @@ private final class RemoteSurfaceView: UIView {
             } else if longPressFired {
                 controller.mouseButton(3, down: false, x: -1, y: -1)
             } else if isLeftDown {
-                if let point = mappedPoint(for: touches.first!) {
+                if let touch = touches.first, let point = mappedPoint(for: touch.location(in: self)) {
                     controller.mouseButton(1, down: false, x: point.x, y: point.y)
                 }
             }
@@ -335,16 +335,18 @@ private final class RemoteSurfaceView: UIView {
     // MARK: hardware keyboard
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let flags = event?.modifierFlags ?? []
         for press in presses {
-            let hid = press.key?.keyCode.rawValue ?? 0
-            handleKey(hid: hid, flags: press.modifierFlags, down: true)
+            let hid = UInt32(press.key?.keyCode.rawValue ?? 0)
+            handleKey(hid: hid, flags: flags, down: true)
         }
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let flags = event?.modifierFlags ?? []
         for press in presses {
-            let hid = press.key?.keyCode.rawValue ?? 0
-            handleKey(hid: hid, flags: press.modifierFlags, down: false)
+            let hid = UInt32(press.key?.keyCode.rawValue ?? 0)
+            handleKey(hid: hid, flags: flags, down: false)
         }
     }
 
