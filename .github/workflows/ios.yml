@@ -1,0 +1,53 @@
+name: ios-build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build & unit test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Pick a simulator
+        id: sim
+        run: |
+          NAME=$(xcrun simctl list devices available | grep -oE 'iPhone 1[0-9]' | head -1)
+          echo "name=${NAME:-iPhone 16}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (simulator, unsigned)
+        working-directory: ios
+        run: |
+          xcodebuild build \
+            -project QLanMsg.xcodeproj \
+            -scheme QLanMsg \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ../build/ios \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Run unit tests
+        working-directory: ios
+        run: |
+          xcodebuild test \
+            -project QLanMsg.xcodeproj \
+            -scheme QLanMsg \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -derivedDataPath ../build/ios \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload simulator .app
+        uses: actions/upload-artifact@v4
+        with:
+          name: qlanmsg-ios-simulator
+          path: build/ios/Build/Products/Debug-iphonesimulator/QLanMsg.app
+          if-no-files-found: error

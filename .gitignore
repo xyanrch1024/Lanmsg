@@ -2,3 +2,7 @@ build/
 *.user
 *.suo
 CMakeLists.txt.user
+# XcodeGen generates the project on demand (macOS side)
+*.xcodeproj
+xcuserdata/
+DerivedData/
