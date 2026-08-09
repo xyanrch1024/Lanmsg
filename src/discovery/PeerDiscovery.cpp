@@ -129,10 +129,14 @@ void PeerDiscovery::readPending() {
         p.ip = sender.toString();
         p.tcpPort = static_cast<quint16>(o["port"].toInt(qlm::kTcpPort));
         p.lastSeenMs = QDateTime::currentMSecsSinceEpoch();
+        const bool isNew = !m_peers.contains(p.id);
         upsert(p, true);
 
-        // reply so the peer learns about us immediately
-        m_socket->writeDatagram(packet(), sender, senderPort ? senderPort : qlm::kUdpPort);
+        // Reply only to a brand-new peer so it learns about us immediately.
+        // Replying to every datagram makes two clients echo each other's
+        // replies forever, saturating the UI thread and freezing the app.
+        if (isNew)
+            m_socket->writeDatagram(packet(), sender, senderPort ? senderPort : qlm::kUdpPort);
     }
 }
 
