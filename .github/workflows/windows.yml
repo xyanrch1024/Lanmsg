@@ -23,3 +23,17 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel
+
+      - name: Bundle Qt runtime
+        shell: pwsh
+        run: |
+          windeployqt --release --no-translations build\Release\qlanmsg.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem build\Release\qlanmsg.exe | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qlanmsg-windows-x64
+          path: build/Release
+          if-no-files-found: error
