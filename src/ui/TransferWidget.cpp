@@ -1,6 +1,7 @@
 #include "ui/TransferWidget.h"
 
 #include <QDateTime>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QProgressBar>
@@ -78,29 +79,33 @@ void TransferWidget::addItem(const TransferItem &item) {
     auto *it = new QListWidgetItem(this);
     it->setData(Qt::UserRole, QVariant::fromValue(item));
     auto *w = new QWidget(this);
-    auto *lay = new QHBoxLayout(w);
+    auto *lay = new QVBoxLayout(w);
     lay->setContentsMargins(6, 3, 6, 3);
+    lay->setSpacing(2);
 
-    auto *texts = new QVBoxLayout;
-    texts->setSpacing(0);
+    // Row 1: title (full width) + cancel button on the right.
+    auto *head = new QHBoxLayout;
     auto *label = new QLabel(w);
     label->setObjectName(QStringLiteral("main"));
-    auto *detail = new QLabel(w);
-    detail->setObjectName(QStringLiteral("detail"));
-    detail->setStyleSheet(QStringLiteral("color:gray; font-size:11px;"));
-    texts->addWidget(label);
-    texts->addWidget(detail);
+    auto *cancel = new QPushButton(QStringLiteral("取消"), w);
+    cancel->setMaximumWidth(60);
+    head->addWidget(label, 1);
+    head->addWidget(cancel);
 
+    // Row 2: progress bar spanning the full row width.
     auto *bar = new QProgressBar(w);
     bar->setRange(0, 1000);
     bar->setValue(0);
-    bar->setTextVisible(true);
-    auto *cancel = new QPushButton(QStringLiteral("取消"), w);
-    cancel->setMaximumWidth(60);
+    bar->setTextVisible(false);
 
-    lay->addLayout(texts, 2);
-    lay->addWidget(bar, 3);
-    lay->addWidget(cancel);
+    // Row 3: detail (size / speed / ETA), full width.
+    auto *detail = new QLabel(w);
+    detail->setObjectName(QStringLiteral("detail"));
+    detail->setStyleSheet(QStringLiteral("color:gray; font-size:11px;"));
+
+    lay->addLayout(head);
+    lay->addWidget(bar);
+    lay->addWidget(detail);
     setItemWidget(it, w);
 
     const QString arrow = item.direction == TransferDirection::Send ? QStringLiteral("→") : QStringLiteral("←");
@@ -135,15 +140,22 @@ void TransferWidget::refreshRow(QListWidgetItem *it) {
     const int pct = ti.total > 0 ? static_cast<int>(ti.done * 1000 / ti.total) : 0;
     bars.first()->setValue(pct);
     const QString arrow = ti.direction == TransferDirection::Send ? QStringLiteral("→") : QStringLiteral("←");
-    mainLabel->setText(QStringLiteral("%1 %2 %3 (%4%)")
-                           .arg(ti.peerName, arrow, ti.name)
-                           .arg(pct / 10));
+    const QString titleText = QStringLiteral("%1 %2 %3 (%4%)")
+                                  .arg(ti.peerName, arrow, ti.name)
+                                  .arg(pct / 10);
+    mainLabel->setToolTip(titleText);
+    const QFontMetrics fmMain(mainLabel->font());
+    mainLabel->setText(fmMain.elidedText(titleText, Qt::ElideMiddle, mainLabel->width()));
+
     if (detail) {
         const qint64 remaining = ti.total - ti.done;
-        detail->setText(QStringLiteral("%1 / %2 · %3 · 剩余 %4")
-                            .arg(formatBytes(ti.done), formatBytes(ti.total),
-                                 formatSpeed(ti.speedBps),
-                                 formatEta(remaining, ti.speedBps)));
+        const QString detailText = QStringLiteral("%1 / %2 · %3 · 剩余 %4")
+                                       .arg(formatBytes(ti.done), formatBytes(ti.total),
+                                            formatSpeed(ti.speedBps),
+                                            formatEta(remaining, ti.speedBps));
+        detail->setToolTip(detailText);
+        const QFontMetrics fmDetail(detail->font());
+        detail->setText(fmDetail.elidedText(detailText, Qt::ElideMiddle, detail->width()));
     }
 }
 
