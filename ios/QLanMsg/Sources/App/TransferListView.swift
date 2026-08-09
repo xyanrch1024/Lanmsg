@@ -48,7 +48,7 @@ private struct TransferRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: record.direction == .send ? "arrow.up.circle" : "arrow.down.circle")
-                    .foregroundStyle(record.ok ? .green : .secondary)
+                    .foregroundStyle(record.ok ? Color.green : Color.secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(record.fileName)
                         .font(.headline)
@@ -64,7 +64,7 @@ private struct TransferRow: View {
                             ShareButton(url: URL(fileURLWithPath: path))
                         }
                         Image(systemName: record.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(record.ok ? .green : .red)
+                            .foregroundStyle(record.ok ? Color.green : Color.red)
                     }
                 }
             }
@@ -75,7 +75,7 @@ private struct TransferRow: View {
             } else {
                 Text(record.status)
                     .font(.caption)
-                    .foregroundStyle(record.ok ? .secondary : .red)
+                    .foregroundStyle(record.ok ? Color.secondary : Color.red)
             }
         }
         .padding(.vertical, 4)
