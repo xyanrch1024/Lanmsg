@@ -48,6 +48,14 @@ bool isLocalAddress(const QString &ip) {
             return true;
     return false;
 }
+
+QString fileSizeText(qint64 size) {
+    if (size >= 1024 * 1024)
+        return QStringLiteral("%1 MB").arg(size / 1024.0 / 1024.0, 0, 'f', 1);
+    if (size >= 1024)
+        return QStringLiteral("%1 KB").arg(size / 1024.0, 0, 'f', 1);
+    return QStringLiteral("%1 B").arg(size);
+}
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -364,20 +372,29 @@ void MainWindow::sendFileTo(const Peer &peer, const QString &path) {
         return;
     const QFileInfo info(path);
     const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString name = info.fileName();
+    const qint64 size = info.size();
 
     m_net->ensureSession(peer);
     auto *sender = new FileSender(peer.ip, token, path, m_net, this);
     m_senders.insert(token, sender);
-    appendTransfer(TransferDirection::Send, peer.name, token, info.fileName(), info.size());
+    appendTransfer(TransferDirection::Send, peer.name, token, name, size);
     connect(sender, &FileSender::progress, this, [this](const QString &t, qint64 sent, qint64 total) {
         m_transfer->updateProgress(t, sent, total);
     });
-    connect(sender, &FileSender::finished, this, [this](const QString &t, bool ok, const QString &info) {
+    connect(sender, &FileSender::finished, this, [this, ip = peer.ip, name](const QString &t, bool ok, const QString &info) {
         m_transfer->setStatus(t, true, ok ? QStringLiteral("完成 - %1").arg(info) : QStringLiteral("失败 - %1").arg(info));
+        const QString text = ok ? QStringLiteral("文件「%1」发送完成").arg(name)
+                                : QStringLiteral("文件「%1」发送失败: %2").arg(name, info);
+        appendChatEntry(ip, QStringLiteral("我"), text, QDateTime::currentMSecsSinceEpoch(), true);
         if (FileSender *s = m_senders.take(t))
             s->deleteLater();
     });
     sender->start();
+
+    appendChatEntry(peer.ip, QStringLiteral("我"),
+                    QStringLiteral("发送文件: %1 (%2)").arg(name, fileSizeText(size)),
+                    QDateTime::currentMSecsSinceEpoch(), true);
 }
 
 void MainWindow::onFileOffer(const QString &ip, const FileOffer &offer) {
@@ -424,16 +441,23 @@ void MainWindow::onFileOffer(const QString &ip, const FileOffer &offer) {
     connect(receiver, &FileReceiver::progress, this, [this](const QString &t, qint64 received, qint64 total) {
         m_transfer->updateProgress(t, received, total);
     });
-    connect(receiver, &FileReceiver::finished, this, [this](const QString &t, bool ok, const QString &info) {
+    connect(receiver, &FileReceiver::finished, this, [this, ip, who, fileName = offer.name](const QString &t, bool ok, const QString &info) {
         if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
             qInfo() << "[test] file receive finished ok=" << ok << info;
         m_transfer->setStatus(t, true, ok ? QStringLiteral("完成 - %1").arg(info) : QStringLiteral("失败 - %1").arg(info));
+        const QString text = ok ? QStringLiteral("文件「%1」接收完成").arg(fileName)
+                                : QStringLiteral("文件「%1」接收失败: %2").arg(fileName, info);
+        appendChatEntry(ip, who, text, QDateTime::currentMSecsSinceEpoch(), false);
         if (FileReceiver *r = m_receivers.take(t))
             r->deleteLater();
     });
     connect(m_net, &NetworkService::fileDoneReceived, receiver, &FileReceiver::onDone);
     if (receiver->active())
         m_net->sendFileAccept(ip, offer.token);
+
+    appendChatEntry(ip, who,
+                    QStringLiteral("发送文件: %1 (%2)").arg(offer.name, fileSizeText(offer.size)),
+                    QDateTime::currentMSecsSinceEpoch(), false);
 }
 
 void MainWindow::onFileChunk(const QString &ip, const QString &token, qint64 seq, const QByteArray &chunk) {
@@ -463,6 +487,12 @@ void MainWindow::appendTransfer(TransferDirection dir, const QString &peerName, 
     item.total = total;
     item.done = 0;
     m_transfer->addItem(item);
+}
+
+void MainWindow::appendChatEntry(const QString &ip, const QString &who, const QString &text, qint64 ts, bool isSelf) {
+    m_history[ip].append(ChatEntry{who, text, ts});
+    if (ip == m_currentIp)
+        m_chat->appendMessage(who, text, ts, isSelf);
 }
 
 void MainWindow::clearFinishedTransfers() {

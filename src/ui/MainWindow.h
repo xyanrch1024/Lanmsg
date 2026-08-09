@@ -65,6 +65,7 @@ private:
     QString rcKey(const QString &ip, const QString &token) const { return ip + QLatin1Char('|') + token; }
     void appendTransfer(TransferDirection dir, const QString &peerName, const QString &token,
                         const QString &name, qint64 total);
+    void appendChatEntry(const QString &ip, const QString &who, const QString &text, qint64 ts, bool isSelf);
     void clearFinishedTransfers();
 
     PeerDiscovery *m_discovery = nullptr;
