@@ -1,4 +1,5 @@
 import SwiftUI
+import QLanMsgCore
 
 struct ChatView: View {
     @EnvironmentObject private var model: AppModel

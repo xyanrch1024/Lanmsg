@@ -1,4 +1,5 @@
 import SwiftUI
+import QLanMsgCore
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel

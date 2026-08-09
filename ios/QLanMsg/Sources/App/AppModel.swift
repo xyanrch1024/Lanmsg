@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import QLanMsgCore
 
 /// Central app coordinator. Owns the Discovery / Transport instances and routes
 /// incoming frames to the right per-peer feature (chat, file transfer, remote

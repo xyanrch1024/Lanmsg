@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import QLanMsgCore
 
 /// One remote-control session where the iPhone is the *controller*. Sends
 /// RcRequest and forwards RcInput events; AppModel routes RcAccept / RcDecline /

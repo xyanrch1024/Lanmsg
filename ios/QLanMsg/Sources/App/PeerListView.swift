@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import QLanMsgCore
 
 struct PeerListView: View {
     @EnvironmentObject private var model: AppModel

@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import QLanMsgCore
 
 /// Full-screen remote control: shows the desktop's JPEG frames, translates
 /// touches into mouse/wheel input, and forwards hardware-keyboard presses.

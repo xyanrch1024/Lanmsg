@@ -1,4 +1,5 @@
 import Foundation
+import QLanMsgCore
 
 // MARK: - UI-facing models
 
