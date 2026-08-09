@@ -24,6 +24,10 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      - name: Copy helper batch
+        shell: pwsh
+        run: Copy-Item run-two-instances.bat build\Release\run-two-instances.bat
+
       - name: Bundle Qt runtime
         shell: pwsh
         run: |
