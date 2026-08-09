@@ -201,10 +201,15 @@ public final class Discovery {
                      ip: senderIP,
                      tcpPort: UInt16(o["port"] as? Int ?? Int(ProtocolSpec.tcpPort)),
                      lastSeen: Date())
+        let isNew = peers[p.id] == nil
         upsert(p, notify: true)
 
-        // reply so the peer learns about us immediately
-        sendPacket(packet(), to: senderIP, port: senderPort == 0 ? ProtocolSpec.udpPort : senderPort)
+        // Reply only to a brand-new peer so it learns about us immediately.
+        // Replying to every datagram makes two clients echo each other's
+        // replies forever (same fix as the desktop PeerDiscovery.cpp).
+        if isNew {
+            sendPacket(packet(), to: senderIP, port: senderPort == 0 ? ProtocolSpec.udpPort : senderPort)
+        }
     }
 
     private func upsert(_ p: Peer, notify: Bool) {
