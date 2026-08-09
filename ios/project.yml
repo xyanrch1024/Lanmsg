@@ -1,0 +1,57 @@
+name: QLanMsg
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+targets:
+  QLanMsgCore:
+    type: framework
+    platform: iOS
+    sources:
+      - path: QLanMsg/Sources/Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.qlanmsg.core
+        PRODUCT_NAME: QLanMsgCore
+        SKIP_INSTALL: YES
+        CODE_SIGN_STYLE: Automatic
+  QLanMsg:
+    type: application
+    platform: iOS
+    sources:
+      - path: QLanMsg/Sources/App
+    dependencies:
+      - target: QLanMsgCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.qlanmsg.app
+        PRODUCT_NAME: QLanMsg
+        INFOPLIST_FILE: QLanMsg/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+  QLanMsgCoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: QLanMsg/Tests
+    dependencies:
+      - target: QLanMsgCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.qlanmsg.tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+schemes:
+  QLanMsg:
+    build:
+      targets:
+        QLanMsg: all
+        QLanMsgCore: all
+        QLanMsgCoreTests: [test]
+    test:
+      targets:
+        - QLanMsgCoreTests
