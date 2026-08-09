@@ -23,6 +23,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QNetworkInterface>
 #include <QProgressBar>
 #include <QSplitter>
 #include <QStatusBar>
@@ -33,6 +34,18 @@
 #include <QVBoxLayout>
 
 #include <QDebug>
+
+namespace {
+bool isLocalAddress(const QString &ip) {
+    if (ip == QStringLiteral("127.0.0.1") || ip == QStringLiteral("::1"))
+        return true;
+    const auto addrs = QNetworkInterface::allAddresses();
+    for (const auto &a : addrs)
+        if (a.toString() == ip)
+            return true;
+    return false;
+}
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -439,6 +452,11 @@ void MainWindow::clearFinishedTransfers() {
 }
 
 void MainWindow::startRemoteControl(const Peer &peer) {
+    if (isLocalAddress(peer.ip)) {
+        QMessageBox::warning(this, QStringLiteral("远程控制"),
+                             QStringLiteral("不能远程控制本机:同机控制会抓取到控制窗口自身，产生无限画面嵌套。"));
+        return;
+    }
     m_net->ensureSession(peer);
     auto *dlg = new RemoteDialog(peer, m_net, this);
     m_remoteDialogs.insert(rcKey(peer.ip, dlg->token()), dlg);
@@ -454,6 +472,13 @@ void MainWindow::startRemoteControl(const Peer &peer) {
 void MainWindow::onRcRequest(const QString &ip, const QString &token, const QString &requestName, bool hasPassword) {
     if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
         qInfo() << "[rc] incoming request from" << ip << requestName << "token=" << token;
+
+    if (isLocalAddress(ip)) {
+        if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
+            qInfo() << "[rc] rejecting same-host request from" << ip;
+        m_remoteServer->respond(ip, token, false);
+        return;
+    }
 
     if (qEnvironmentVariableIsSet("QLANMSG_AUTO_ACCEPT")) {
         m_remoteServer->respond(ip, token, true);
