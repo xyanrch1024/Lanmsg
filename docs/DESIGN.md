@@ -324,6 +324,7 @@ GUI 主线程(QThread: main):
   - `InputSinkWindows`:鼠标移动用 `SetCursorPos`(物理像素绝对定位),按键/滚轮/键盘用 `SendInput`(`MOUSEEVENTF_*` / `KEYEVENTF_*`);`Qt::Key → VK` 映射(特殊键表 + 字母数字直通 + `VkKeyScanW` 解析其余可打印字符)。
   - 局限:安全桌面(锁屏/UAC 弹窗)下 `SendInput` 与 `BitBlt` 均失效;截屏仅覆盖主屏。
 - **同机远程控制被禁止**:截屏是整屏 `BitBlt`,若被控端与被控端是同一台机器,抓取的画面会包含控制端显示"远程画面"的窗口,形成无限镜面嵌套。`MainWindow` 对双方都做本机地址检查:控制端 `startRemoteControl` 直接拦截并提示;被控端 `onRcRequest` 对来源为本机地址的请求直接拒绝(兜底,防测试钩子绕过)。跨机器/跨 WSL2 与 Windows 的 IP 各不相同,不受影响。
+- **代理软件冲突**:全局代理软件(Clash、V2rayN 等)会通过环境变量(`ALL_PROXY`/`socks_proxy`)注入 SOCKS 代理,Qt 默认对其所有 socket 生效;对 UDP 发现 socket 会导致 `bind()` 失败、`joinMulticastGroup` 报 "not in BoundState" / "Connection not allowed by SOCKSv5 server"。应用在 `main()` 中强制 `QNetworkProxy::setApplicationProxy(NoProxy)` 全局禁用代理(QLanMsg 仅走局域网,无上网功能)。
 
 ---
 

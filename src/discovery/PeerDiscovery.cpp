@@ -32,9 +32,14 @@ PeerDiscovery::PeerDiscovery(QObject *parent)
     // broadcast to a shared port are delivered to a single socket only,
     // multicast is delivered to every joined member. Failure is non-fatal:
     // the LAN broadcast path still works across machines.
-    const QHostAddress group{QLatin1String(qlm::kMulticastGroup)};
-    if (!m_socket->joinMulticastGroup(group))
-        qWarning() << "joinMulticastGroup failed:" << m_socket->errorString();
+    if (m_socket->state() == QAbstractSocket::BoundState) {
+        const QHostAddress group{QLatin1String(qlm::kMulticastGroup)};
+        if (!m_socket->joinMulticastGroup(group))
+            qWarning() << "joinMulticastGroup failed:" << m_socket->errorString();
+    } else {
+        qWarning() << "discovery UDP bind failed:" << m_socket->errorString()
+                   << "(state:" << m_socket->state() << "), multicast disabled";
+    }
     const int fd = static_cast<int>(m_socket->socketDescriptor());
     if (fd >= 0) {
         int one = 1;

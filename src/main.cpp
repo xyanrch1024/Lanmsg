@@ -6,6 +6,7 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QLocale>
+#include <QNetworkProxy>
 #include <QStringList>
 
 namespace {
@@ -41,6 +42,13 @@ int main(int argc, char *argv[]) {
     QApplication::setApplicationName(QStringLiteral("QLanMsg"));
     QApplication::setOrganizationName(QStringLiteral("QLanMsg"));
     QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+
+    // LAN-only messenger: never route any socket through a SOCKS/HTTP proxy.
+    // Global-proxy software (Clash, V2rayN, ...) sets env vars (ALL_PROXY,
+    // socks_proxy) that Qt picks up by default; a SOCKS proxy breaks the UDP
+    // discovery socket (bind() fails -> multicast join error "not in
+    // BoundState" / "Connection not allowed by SOCKSv5 server").
+    QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
 
     applyCjkFont();
 
