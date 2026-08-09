@@ -20,7 +20,6 @@ class RemoteServer;
 class TransferWidget;
 class QListWidget;
 class QListWidgetItem;
-class QTabWidget;
 
 struct ChatEntry {
     QString who;
@@ -51,6 +50,9 @@ private slots:
     void onSessionClosed(const QString &ip);
     void openSettings();
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     void buildUi();
     void updatePeerItem(const Peer &p);
@@ -58,6 +60,7 @@ private:
     Peer currentPeer() const;
     void selectPeer(const QString &ip);
     void sendFileTo(const Peer &peer);
+    void sendFileTo(const Peer &peer, const QString &path);
     void startRemoteControl(const Peer &peer);
     QString rcKey(const QString &ip, const QString &token) const { return ip + QLatin1Char('|') + token; }
     void appendTransfer(TransferDirection dir, const QString &peerName, const QString &token,
@@ -69,7 +72,6 @@ private:
     RemoteServer *m_remoteServer = nullptr;
 
     QListWidget *m_peerList = nullptr;
-    QTabWidget *m_tabs = nullptr;
     ChatWidget *m_chat = nullptr;
     TransferWidget *m_transfer = nullptr;
 

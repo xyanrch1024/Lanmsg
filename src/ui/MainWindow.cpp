@@ -15,6 +15,8 @@
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -23,13 +25,14 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QNetworkInterface>
 #include <QProgressBar>
 #include <QSplitter>
 #include <QStatusBar>
-#include <QTabWidget>
 #include <QToolBar>
 #include <QTimer>
+#include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
 
@@ -86,6 +89,14 @@ MainWindow::MainWindow(QWidget *parent)
         if (!msg.isEmpty())
             statusBar()->showMessage(msg, 5000);
     });
+
+    // Drag & drop a file from the OS file manager to send it.
+    for (QWidget *dropTarget : {static_cast<QWidget *>(m_peerList),
+                                static_cast<QWidget *>(m_chat),
+                                static_cast<QWidget *>(m_transfer)}) {
+        dropTarget->setAcceptDrops(true);
+        dropTarget->installEventFilter(this);
+    }
 }
 
 MainWindow::~MainWindow() = default;
@@ -106,13 +117,19 @@ void MainWindow::buildUi() {
 
     m_chat = new ChatWidget(this);
     m_transfer = new TransferWidget(this);
-    m_tabs = new QTabWidget(this);
-    m_tabs->addTab(m_chat, QStringLiteral("聊天"));
-    m_tabs->addTab(m_transfer, QStringLiteral("传输"));
+
+    // Chat on top, transfer list (with progress bars) pinned to the bottom.
+    auto *rightSplit = new QSplitter(Qt::Vertical, this);
+    rightSplit->addWidget(m_chat);
+    rightSplit->addWidget(m_transfer);
+    rightSplit->setStretchFactor(0, 3);
+    rightSplit->setStretchFactor(1, 1);
+    rightSplit->setSizes({460, 180});
+    rightSplit->setChildrenCollapsible(true);
 
     auto *splitter = new QSplitter(this);
     splitter->addWidget(m_peerList);
-    splitter->addWidget(m_tabs);
+    splitter->addWidget(rightSplit);
     splitter->setStretchFactor(0, 2);
     splitter->setStretchFactor(1, 5);
     splitter->setSizes({300, 700});
@@ -306,7 +323,6 @@ void MainWindow::selectPeer(const QString &ip) {
             break;
         }
     }
-    m_tabs->setCurrentWidget(m_chat);
 }
 
 void MainWindow::onChatSend(const QString &text) {
@@ -338,6 +354,12 @@ void MainWindow::onChatReceived(const QString &ip, const QString &text, qint64 t
 
 void MainWindow::sendFileTo(const Peer &peer) {
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("选择要发送的文件"));
+    if (path.isEmpty())
+        return;
+    sendFileTo(peer, path);
+}
+
+void MainWindow::sendFileTo(const Peer &peer, const QString &path) {
     if (path.isEmpty())
         return;
     const QFileInfo info(path);
@@ -559,4 +581,57 @@ void MainWindow::openSettings() {
         m_discovery->broadcast();
         statusBar()->showMessage(QStringLiteral("设置已保存"), 2000);
     }
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched != m_peerList && watched != m_chat && watched != m_transfer)
+        return QMainWindow::eventFilter(watched, event);
+
+    if (event->type() == QEvent::DragEnter) {
+        auto *de = static_cast<QDragEnterEvent *>(event);
+        if (de->mimeData()->hasUrls()) {
+            de->acceptProposedAction();
+            return true;
+        }
+    } else if (event->type() == QEvent::DragMove) {
+        auto *dm = static_cast<QDragMoveEvent *>(event);
+        if (watched == m_peerList) {
+            // Highlight the peer row under the cursor as the drop target.
+            QListWidgetItem *it = m_peerList->itemAt(dm->position().toPoint());
+            if (it)
+                m_peerList->setCurrentItem(it);
+        }
+        if (dm->mimeData()->hasUrls())
+            dm->acceptProposedAction();
+        return true;
+    } else if (event->type() == QEvent::Drop) {
+        auto *de = static_cast<QDropEvent *>(event);
+        QStringList paths;
+        const QList<QUrl> urls = de->mimeData()->urls();
+        for (const QUrl &u : urls) {
+            if (u.isLocalFile() && QFileInfo(u.toLocalFile()).isFile())
+                paths << u.toLocalFile();
+        }
+        if (paths.isEmpty())
+            return true;
+
+        Peer target = currentPeer();
+        if (watched == m_peerList) {
+            QListWidgetItem *it = m_peerList->itemAt(de->position().toPoint());
+            if (it) {
+                const Peer p = m_discovery->peerById(it->data(Qt::UserRole).toString());
+                if (!p.id.isEmpty())
+                    target = p;
+            }
+        }
+        if (target.id.isEmpty()) {
+            statusBar()->showMessage(QStringLiteral("请先选择要发送文件的设备"), 3000);
+        } else {
+            for (const QString &path : paths)
+                sendFileTo(target, path);
+        }
+        de->acceptProposedAction();
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
