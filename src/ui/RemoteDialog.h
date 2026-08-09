@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDialog>
+#include <QEvent>
 
 #include "common/Protocol.h"
 #include "discovery/Peer.h"
@@ -33,6 +34,7 @@ signals:
     void closed(const QString &token);
 
 protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void mousePressEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
@@ -44,6 +46,9 @@ protected:
 private:
     void sendInput(const InputEvent &ev);
     void mapPos(const QPoint &pos, int &x, int &y) const;
+    void sendModifierDelta(Qt::KeyboardModifiers next);
+    void releaseAllMods();
+    static int modifierKey(Qt::KeyboardModifiers mod);
 
     Peer m_peer;
     NetworkService *m_svc = nullptr;
@@ -62,4 +67,5 @@ private:
     bool m_connected = false;
     int m_screenW = 0;
     int m_screenH = 0;
+    Qt::KeyboardModifiers m_heldMods = {};
 };

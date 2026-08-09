@@ -293,6 +293,7 @@ RcStop / 关闭窗口 ───────────────────�
 - **帧丢弃的背压控制**:`sendRemoteFrame` 检查 `bytesToWrite() > 768KB` 则丢帧,防止画面延迟累积。
 - **空屏/黑屏检测**:`CaptureWorker` 连续约 1 秒(10 帧)采集到纯黑或空帧即判定"桌面不可采集",停止推流并把原因通过 `RcDecline` 回传控制端,避免控制端看到一团黑却不知缘由(WSLg 下 Xwayland 根窗口为纯黑,见 §13)。
 - **输入注入按需创建** `InputSinkX11`(XTest),首次收到输入事件时才初始化。
+- **点击聚焦后远程接管全部键盘输入**:画面(QLabel)被点击聚焦后,本地 IME 被停用(`WA_InputMethodEnabled=false`,仅本窗口),所有按键事件原样转发到远程——包括自动重复(按住连续触发)与修饰键状态(控制端按 `e->modifiers()` 变化把 Shift/Ctrl/Alt/Meta 拆成独立 `KeyDown/KeyUp` 事件补发,复用既有 key 通道、协议零改动)。因此远程输入法能在远程组字(`Ctrl+Space` 切换、Shift 中英切换均生效),Esc 等按键送往远程而不再关闭控制窗口(退出仍走"断开"按钮/关窗)。会话结束或窗口失焦时 `releaseAllMods()` 补发修饰键 `KeyUp`,防止远程残留卡住的修饰键。
 - **密码策略**:`Config::remotePassword()` 为空 → 每次都弹确认框;非空 → 校验密码。由 `MainWindow::onRcRequest` 决策,`RemoteServer::respond()` 只执行。
 - **并发保护**:已被控制时拒绝新请求;会话断开自动结束。
 
