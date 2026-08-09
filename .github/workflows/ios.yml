@@ -29,6 +29,7 @@ jobs:
         working-directory: ios
         shell: bash
         run: |
+          mkdir -p ../build
           set +e
           xcodebuild build \
             -project QLanMsg.xcodeproj \
