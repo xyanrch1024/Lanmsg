@@ -69,6 +69,10 @@ MainWindow::MainWindow(QWidget *parent)
                                              .arg(m_remoteServer->active() ? QStringLiteral("进行中") : QStringLiteral("空闲")),
                                            3000);
             });
+    connect(m_remoteServer, &RemoteServer::error, this, [this](const QString &msg) {
+        if (!msg.isEmpty())
+            statusBar()->showMessage(msg, 5000);
+    });
 }
 
 MainWindow::~MainWindow() = default;

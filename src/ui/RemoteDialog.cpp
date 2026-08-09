@@ -97,9 +97,9 @@ void RemoteDialog::onAccepted() {
 }
 
 void RemoteDialog::onDeclined(const QString &reason) {
-    m_status->setText(QStringLiteral("已拒绝: %1").arg(reason));
+    m_status->setText(reason.isEmpty() ? QStringLiteral("已拒绝控制请求") : reason);
     m_controlling = false;
-    QTimer::singleShot(2500, this, &RemoteDialog::close);
+    QTimer::singleShot(3000, this, &RemoteDialog::close);
 }
 
 void RemoteDialog::onStoppedByPeer() {

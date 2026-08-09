@@ -17,7 +17,7 @@ QLanMsg 是一款基于 **Qt6 / C++17** 的局域网通讯工具,实现了三大
 
 它采用 **无中心服务器** 的 P2P 模型:每台设备既是客户端也是服务端,通过 UDP 广播发现对等端,通过 TCP 直连建立会话。
 
-> 本项目在 WSL2 (WSLg) 环境下开发与验证,亦支持 Windows(WIN32 分支已有占位)。
+> 本项目在 WSL2 (WSLg) 环境下开发与验证,亦支持 Windows(原生构建,含远程控制后端;另有 GitHub Actions 在 windows-latest 上自动编译验证)。
 
 ---
 
@@ -28,7 +28,7 @@ QLanMsg 是一款基于 **Qt6 / C++17** 的局域网通讯工具,实现了三大
 - **构建系统**:CMake (≥ 3.16),AUTOMOC/AUTORCC/AUTOUIC
 - **平台后端**
   - Linux:libX11 + Xtst + Xext(XTest 输入注入、XShm 截屏)
-  - Windows:user32 + gdi32(截屏/输入注入在 `ScreenSourceWindows.cpp` / `InputSinkWindows.cpp` 占位,未实现)
+  - Windows:user32 + gdi32(SetCursorPos/SendInput 输入注入、GDI BitBlt 截屏)
 - **依赖组件**:`Qt6::Widgets`、`Qt6::Network`、`X11`、`Xtst`、`Xext`
 - **无第三方开源依赖**
 
@@ -102,6 +102,8 @@ qlanmsg/
 │   │   ├── IInputSink.h         输入注入抽象接口
 │   │   ├── ScreenSourceX11.h/.cpp  X11/XShm 截屏
 │   │   ├── InputSinkX11.h/.cpp    XTest 输入注入
+│   │   ├── ScreenSourceWindows.h/.cpp  GDI BitBlt 截屏(仅主屏)
+│   │   └── InputSinkWindows.h/.cpp    SetCursorPos/SendInput 输入注入
 │   │   └── RemoteServer.h/.cpp   被控端逻辑 + CaptureWorker
 │   └── ui/
 │       ├── MainWindow.h/.cpp    主窗口与信号总线
@@ -288,6 +290,7 @@ RcStop / 关闭窗口 ───────────────────�
 - **截屏与编码在独立线程** `CaptureWorker`(QThread):阻塞式 X 调用与 JPEG 编码不卡 UI。
 - **XShm 优先,XGetImage 兜底**:共享内存截屏;分辨率变化时自动重建。
 - **帧丢弃的背压控制**:`sendRemoteFrame` 检查 `bytesToWrite() > 768KB` 则丢帧,防止画面延迟累积。
+- **空屏/黑屏检测**:`CaptureWorker` 连续约 1 秒(10 帧)采集到纯黑或空帧即判定"桌面不可采集",停止推流并把原因通过 `RcDecline` 回传控制端,避免控制端看到一团黑却不知缘由(WSLg 下 Xwayland 根窗口为纯黑,见 §13)。
 - **输入注入按需创建** `InputSinkX11`(XTest),首次收到输入事件时才初始化。
 - **密码策略**:`Config::remotePassword()` 为空 → 每次都弹确认框;非空 → 校验密码。由 `MainWindow::onRcRequest` 决策,`RemoteServer::respond()` 只执行。
 - **并发保护**:已被控制时拒绝新请求;会话断开自动结束。
@@ -315,7 +318,10 @@ GUI 主线程(QThread: main):
 - Linux 实现:
   - `ScreenSourceX11`:`XShmCreateImage` 共享内存,字节序假定 ARGB32 ⇔ X11 ZPixmap 32bpp(小端)。
   - `InputSinkX11`:`XTestFakeMotionEvent / XTestFakeButtonEvent / XTestFakeKeyEvent`,含 `Qt::Key → keysym` 映射(特殊键表 + ASCII 直通)。
-- Windows 分支在 CMake 中已挂占位源文件(`ScreenSourceWindows.cpp` / `InputSinkWindows.cpp`),可后续填充。
+- Windows 实现:
+  - `ScreenSourceWindows`:`CreateDIBSection`(32bpp、负高度自顶向下)+ `BitBlt` 抓取主屏 DC(仅主屏),返回 `Format_ARGB32`;物理像素,与输入注入坐标一致。
+  - `InputSinkWindows`:鼠标移动用 `SetCursorPos`(物理像素绝对定位),按键/滚轮/键盘用 `SendInput`(`MOUSEEVENTF_*` / `KEYEVENTF_*`);`Qt::Key → VK` 映射(特殊键表 + 字母数字直通 + `VkKeyScanW` 解析其余可打印字符)。
+  - 局限:安全桌面(锁屏/UAC 弹窗)下 `SendInput` 与 `BitBlt` 均失效;截屏仅覆盖主屏。
 
 ---
 
@@ -390,7 +396,8 @@ QLANMSG_APPID=BBBB QLANMSG_TCPPORT=24262 ./build/qlanmsg &
 
 1. **无传输加密**:可加 TLS(WSS/OpenSSL)或简化对称加密(AES-GCM + ECDH 协商)。
 2. **会话复用单一 TCP 连接**:聊天/文件/远程共用一条流,文件发送虽已背压,但无优先级;未来可拆流或引入消息优先级队列。
-3. **远程控制仅支持 X11 / XWayland**:Wayland 原生(pipewire/screencast)未实现;Windows 截屏/注入为占位。
+3. **远程控制仅支持 X11/XWayland 与 Windows**:Wayland 原生(pipewire/screencast)未实现;Windows 截屏仅主屏,锁屏/UAC 安全桌面下截屏与输入注入失效。
+   - **WSLg 限制**:WSLg 的桌面由 Windows 宿主机合成(RDP),Linux 侧 Xwayland 根窗口为纯黑且 `XGetImage` 报 `BadMatch`,**无法从 Linux 侧采集真实桌面**。程序检测到黑屏后会自动停止推流,并把原因("桌面画面为空白:WSLg/无 X11 桌面环境下无法采集真实屏幕")回传给控制端显示,而不是静默黑屏。远程控制仅在真实 X11 桌面会话或原生 Windows 下可用。
 4. **无 NAT 穿透**:仅限同一可达局域网;WSL2 已用单播弥补广播隔离。
 5. **文件无断点续传/校验和**:完成后未做端到端哈希校验(可加 SHA-256 摘要)。
 6. **聊天无持久化**:历史仅存内存,退出即失(可接 SQLite)。

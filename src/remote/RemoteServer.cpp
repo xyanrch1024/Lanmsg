@@ -9,10 +9,14 @@
 #if defined(Q_OS_LINUX)
 #include "remote/InputSinkX11.h"
 #include "remote/ScreenSourceX11.h"
+#elif defined(Q_OS_WIN)
+#include "remote/InputSinkWindows.h"
+#include "remote/ScreenSourceWindows.h"
 #endif
 
 #include <QBuffer>
 #include <QDateTime>
+#include <QImage>
 #include <QImageWriter>
 #include <QThread>
 #include <QTimer>
@@ -33,16 +37,20 @@ CaptureWorker::~CaptureWorker() {
 
 void CaptureWorker::start(int intervalMs, int quality) {
     m_quality = quality;
+    m_nullFrames = 0;
+    m_blankFrames = 0;
     if (!m_source) {
 #if defined(Q_OS_LINUX)
         m_source = new ScreenSourceX11;
+#elif defined(Q_OS_WIN)
+        m_source = new ScreenSourceWindows;
 #else
         emit failed(QStringLiteral("当前平台不支持截屏"));
         return;
 #endif
     }
     if (!m_source->initialize()) {
-        emit failed(QStringLiteral("无法连接显示服务(仅支持 X11/Wayland XWayland 会话)"));
+        emit failed(QStringLiteral("无法初始化屏幕采集"));
         delete m_source;
         m_source = nullptr;
         return;
@@ -66,12 +74,51 @@ void CaptureWorker::stop() {
     }
 }
 
+bool CaptureWorker::isBlank(const QImage &img) {
+    if (img.isNull())
+        return true;
+    const uchar *bits = img.constBits();
+    const qint64 total = static_cast<qint64>(img.bytesPerLine()) * img.height();
+    qint64 sum = 0;
+    qint64 count = 0;
+    const qint64 step = 16;
+    for (qint64 i = 0; i < total; i += step) {
+        sum += bits[i];
+        ++count;
+    }
+    if (count > 0 && qEnvironmentVariableIsSet("QLANMSG_LOG") && (sum / count) < 16)
+        qInfo() << "[rc] blank level mean=" << (sum / count);
+    return count > 0 && sum / count < 8; // near-black frame
+}
+
 void CaptureWorker::tick() {
     if (!m_source)
         return;
     QImage img = m_source->grab();
-    if (img.isNull())
+    if (img.isNull()) {
+        // silent null frames (e.g. XGetImage BadMatch in WSLg) mean no capture
+        if (++m_nullFrames >= 10) {
+            m_nullFrames = 0;
+            emit failed(QStringLiteral("无法采集屏幕画面(显示服务拒绝返回图像)"));
+            if (m_timer)
+                m_timer->stop();
+        }
         return;
+    }
+    m_nullFrames = 0;
+    if (isBlank(img)) {
+        // a fully black capture means the real desktop is not readable
+        // (WSLg composites the desktop host-side; Xwayland root is empty)
+        if (++m_blankFrames >= 10) {
+            m_blankFrames = 0;
+            emit failed(QStringLiteral("桌面画面为空白:WSLg/无 X11 桌面环境下无法采集真实屏幕"));
+            if (m_timer)
+                m_timer->stop();
+            return;
+        }
+    } else {
+        m_blankFrames = 0;
+    }
     QByteArray jpeg;
     QBuffer buf(&jpeg);
     buf.open(QIODevice::WriteOnly);
@@ -128,7 +175,9 @@ void RemoteServer::begin(const QString &ip, const QString &token) {
     m_worker = new CaptureWorker;
     m_worker->moveToThread(m_thread);
     connect(m_worker, &CaptureWorker::frameReady, this, &RemoteServer::onFrameReady, Qt::QueuedConnection);
-    connect(m_worker, &CaptureWorker::failed, this, [this](const QString &msg) {
+    connect(m_worker, &CaptureWorker::failed, this, [this, ip, token](const QString &msg) {
+        // tell the controller why the stream is unusable instead of a silent black screen
+        m_svc->declineRemote(ip, token, msg);
         emit error(msg);
         end(msg);
     });
@@ -153,6 +202,8 @@ void RemoteServer::onRcInput(const QString &ip, const QString &token, const Inpu
     if (!m_input) {
 #if defined(Q_OS_LINUX)
         m_input = new InputSinkX11;
+#elif defined(Q_OS_WIN)
+        m_input = new InputSinkWindows;
 #else
         emit error(QStringLiteral("当前平台不支持输入注入"));
         return;

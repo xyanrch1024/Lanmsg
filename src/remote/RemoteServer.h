@@ -32,9 +32,13 @@ private slots:
     void tick();
 
 private:
+    bool isBlank(const QImage &img);
+
     QTimer *m_timer = nullptr;
     IScreenSource *m_source = nullptr;
     int m_quality = 65;
+    int m_nullFrames = 0;
+    int m_blankFrames = 0;
 };
 
 // Receives remote-control requests: asks for permission, then streams the screen

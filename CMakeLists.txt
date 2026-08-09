@@ -17,8 +17,6 @@ set(SOURCES
     src/net/NetworkService.cpp
     src/net/FileSender.cpp
     src/net/FileReceiver.cpp
-    src/remote/ScreenSourceX11.cpp
-    src/remote/InputSinkX11.cpp
     src/remote/RemoteServer.cpp
     src/ui/MainWindow.cpp
     src/ui/ChatWidget.cpp
