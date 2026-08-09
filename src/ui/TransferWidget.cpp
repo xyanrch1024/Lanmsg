@@ -59,6 +59,16 @@ QString formatEta(qint64 remainingBytes, double bytesPerSec) {
         .arg(secs % 60, 2, 10, QLatin1Char('0'));
 }
 
+// Elides `text` to the label's current width; falls back to the full text when
+// the label has not been laid out yet (width 0) so the row never renders blank.
+QString elidedText(const QLabel *l, const QString &text) {
+    if (l->width() > 0) {
+        const QFontMetrics fm(l->font());
+        return fm.elidedText(text, Qt::ElideMiddle, l->width());
+    }
+    return text;
+}
+
 } // namespace
 
 Q_DECLARE_METATYPE(TransferItem)
@@ -79,33 +89,29 @@ void TransferWidget::addItem(const TransferItem &item) {
     auto *it = new QListWidgetItem(this);
     it->setData(Qt::UserRole, QVariant::fromValue(item));
     auto *w = new QWidget(this);
-    auto *lay = new QVBoxLayout(w);
+    auto *lay = new QHBoxLayout(w);
     lay->setContentsMargins(6, 3, 6, 3);
-    lay->setSpacing(2);
 
-    // Row 1: title (full width) + cancel button on the right.
-    auto *head = new QHBoxLayout;
+    auto *texts = new QVBoxLayout;
+    texts->setSpacing(0);
     auto *label = new QLabel(w);
     label->setObjectName(QStringLiteral("main"));
-    auto *cancel = new QPushButton(QStringLiteral("取消"), w);
-    cancel->setMaximumWidth(60);
-    head->addWidget(label, 1);
-    head->addWidget(cancel);
+    auto *detail = new QLabel(w);
+    detail->setObjectName(QStringLiteral("detail"));
+    detail->setStyleSheet(QStringLiteral("color:gray; font-size:11px;"));
+    texts->addWidget(label);
+    texts->addWidget(detail);
 
-    // Row 2: progress bar spanning the full row width.
     auto *bar = new QProgressBar(w);
     bar->setRange(0, 1000);
     bar->setValue(0);
     bar->setTextVisible(false);
+    auto *cancel = new QPushButton(QStringLiteral("取消"), w);
+    cancel->setMaximumWidth(60);
 
-    // Row 3: detail (size / speed / ETA), full width.
-    auto *detail = new QLabel(w);
-    detail->setObjectName(QStringLiteral("detail"));
-    detail->setStyleSheet(QStringLiteral("color:gray; font-size:11px;"));
-
-    lay->addLayout(head);
-    lay->addWidget(bar);
-    lay->addWidget(detail);
+    lay->addLayout(texts, 1);
+    lay->addWidget(bar, 4);
+    lay->addWidget(cancel);
     setItemWidget(it, w);
 
     const QString arrow = item.direction == TransferDirection::Send ? QStringLiteral("→") : QStringLiteral("←");
@@ -144,8 +150,7 @@ void TransferWidget::refreshRow(QListWidgetItem *it) {
                                   .arg(ti.peerName, arrow, ti.name)
                                   .arg(pct / 10);
     mainLabel->setToolTip(titleText);
-    const QFontMetrics fmMain(mainLabel->font());
-    mainLabel->setText(fmMain.elidedText(titleText, Qt::ElideMiddle, mainLabel->width()));
+    mainLabel->setText(elidedText(mainLabel, titleText));
 
     if (detail) {
         const qint64 remaining = ti.total - ti.done;
@@ -154,8 +159,7 @@ void TransferWidget::refreshRow(QListWidgetItem *it) {
                                             formatSpeed(ti.speedBps),
                                             formatEta(remaining, ti.speedBps));
         detail->setToolTip(detailText);
-        const QFontMetrics fmDetail(detail->font());
-        detail->setText(fmDetail.elidedText(detailText, Qt::ElideMiddle, detail->width()));
+        detail->setText(elidedText(detail, detailText));
     }
 }
 
