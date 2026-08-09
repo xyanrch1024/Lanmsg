@@ -2,6 +2,8 @@
 
 #include "common/Config.h"
 
+#include <QTimer>
+
 PeerSession::PeerSession(QTcpSocket *socket, Role role, QObject *parent)
     : QObject(parent)
     , m_socket(socket)
@@ -13,6 +15,21 @@ PeerSession::PeerSession(QTcpSocket *socket, Role role, QObject *parent)
     connect(m_socket, &QTcpSocket::errorOccurred, this, &PeerSession::onError);
     connect(m_socket, &QTcpSocket::bytesWritten, this,
             [this](qint64) { emit bytesWrittenToSocket(); });
+
+    // Outgoing connections may hang forever if a firewall silently drops the SYN
+    // (common across the WSL2 NAT boundary). Abort so the slot is freed and the
+    // UI can reconnect instead of freezing with a never-ready session.
+    m_connectTimer = new QTimer(this);
+    m_connectTimer->setSingleShot(true);
+    m_connectTimer->setInterval(12000);
+    connect(m_connectTimer, &QTimer::timeout, this, [this] {
+        if (!m_ready) {
+            if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
+                qInfo() << "[session] connect timeout, aborting" << ip();
+            if (m_socket)
+                m_socket->abort();
+        }
+    });
 }
 
 namespace {
@@ -35,14 +52,19 @@ void PeerSession::setReady(bool r) {
     if (m_ready == r)
         return;
     m_ready = r;
-    if (m_ready)
+    if (m_ready) {
+        if (m_connectTimer)
+            m_connectTimer->stop();
         flushQueue();
+    }
     emit readyChanged(m_ready);
 }
 
 void PeerSession::onConnected() {
     if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
         qInfo() << "[session] connected" << ip();
+    if (m_connectTimer)
+        m_connectTimer->start();
     // Outgoing: we are the initiator. Send Hello immediately.
     QJsonObject hello;
     hello["id"] = QString::fromUtf8(Config::instance().appId());

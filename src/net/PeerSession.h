@@ -10,6 +10,8 @@
 
 using qlm::MsgType;
 
+class QTimer;
+
 // One bidirectional TCP connection to a peer.
 class PeerSession : public QObject {
     Q_OBJECT
@@ -59,6 +61,7 @@ private:
 
     QTcpSocket *m_socket = nullptr;
     Role m_role = Incoming;
+    QTimer *m_connectTimer = nullptr;
     QByteArray m_buffer;
     QList<QByteArray> m_queue;
     QString m_peerName;

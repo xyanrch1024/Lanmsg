@@ -128,14 +128,22 @@ void NetworkService::dedupe(PeerSession *s, const QString &initIp, quint64 seq, 
     PeerSession *winner = s;
 
     if (other && other != s) {
-        // keep the session with the smaller (initIp, seq, initAppId) key
-        const QString thisKey = initIp + QLatin1Char('|') + QString::number(seq) + QLatin1Char('|') + initAppId;
-        const QString otherKey = other->initIp() + QLatin1Char('|') + QString::number(other->connSeq()) +
-                                 QLatin1Char('|') + other->initAppId();
-        if (thisKey < otherKey)
-            winner = s;
-        else
-            winner = other;
+        // Never let a connecting session displace a ready one: a connect that a
+        // firewall silently drops (e.g. across the WSL2 NAT boundary) would
+        // otherwise leave this app with only a never-ready session and freeze
+        // all traffic. Compare keys only when both sessions are in the same
+        // readiness state so both ends still agree.
+        if (s->ready() != other->ready()) {
+            winner = s->ready() ? s : other;
+        } else {
+            const QString thisKey = initIp + QLatin1Char('|') + QString::number(seq) + QLatin1Char('|') + initAppId;
+            const QString otherKey = other->initIp() + QLatin1Char('|') + QString::number(other->connSeq()) +
+                                     QLatin1Char('|') + other->initAppId();
+            if (thisKey < otherKey)
+                winner = s;
+            else
+                winner = other;
+        }
     }
 
     PeerSession *loser = (winner == s) ? other : s;
