@@ -6,8 +6,6 @@ public enum ProtocolSpec {
     public static let udpPort: UInt16 = 24260
     public static let tcpPort: UInt16 = 24261
     public static let multicastGroup = "239.255.77.77"
-    public static let discoveryInterval: TimeInterval = 3.0
-    public static let peerTimeout: TimeInterval = 10.0
     public static let frameHeaderSize = 12 // totalLen(4) + msgType(4) + jsonLen(4)
     public static let fileChunkSize = 64 * 1024
     public static let remoteFrameMaxBuffered = 768 * 1024

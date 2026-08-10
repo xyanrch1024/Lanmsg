@@ -107,7 +107,10 @@ MainWindow::MainWindow(QWidget *parent)
     }
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    if (m_discovery)
+        m_discovery->goodbye();
+}
 
 void MainWindow::buildUi() {
     setWindowTitle(QStringLiteral("QLanMsg - 局域网聊天与远程控制"));
@@ -608,7 +611,7 @@ void MainWindow::openSettings() {
     SettingsDialog dlg(this);
     if (dlg.exec() == QDialog::Accepted) {
         // nickname change takes effect on next broadcast
-        m_discovery->broadcast();
+        m_discovery->announce();
         statusBar()->showMessage(QStringLiteral("设置已保存"), 2000);
     }
 }

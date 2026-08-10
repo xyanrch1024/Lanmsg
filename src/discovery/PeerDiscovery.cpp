@@ -23,8 +23,7 @@
 PeerDiscovery::PeerDiscovery(QObject *parent)
     : QObject(parent)
     , m_socket(new QUdpSocket(this))
-    , m_bcastTimer(new QTimer(this))
-    , m_cleanupTimer(new QTimer(this)) {
+    , m_netTimer(new QTimer(this)) {
     m_socket->bind(QHostAddress::AnyIPv4, qlm::kUdpPort,
                    QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
     // Multicast lets multiple instances on the same host (which share the UDP
@@ -47,14 +46,16 @@ PeerDiscovery::PeerDiscovery(QObject *parent)
     }
     connect(m_socket, &QUdpSocket::readyRead, this, &PeerDiscovery::readPending);
 
-    m_bcastTimer->setInterval(qlm::kDiscoveryIntervalMs);
-    connect(m_bcastTimer, &QTimer::timeout, this, &PeerDiscovery::broadcast);
-    m_bcastTimer->start();
-    broadcast();
+    // Announce once at startup. No periodic keep-alive broadcast; peers are
+    // removed when they send a "bye" (or we re-discover them).
+    m_lastLocalIp = localIPv4();
+    announce();
 
-    m_cleanupTimer->setInterval(2000);
-    connect(m_cleanupTimer, &QTimer::timeout, this, &PeerDiscovery::cleanup);
-    m_cleanupTimer->start();
+    // Poll the local IP every few seconds; if it changed (new Wi-Fi, VPN,
+    // WSL2 address shuffle) re-announce so the new network segment can see us.
+    m_netTimer->setInterval(5000);
+    connect(m_netTimer, &QTimer::timeout, this, &PeerDiscovery::checkNetwork);
+    m_netTimer->start();
 }
 
 QList<Peer> PeerDiscovery::peers() const {
@@ -72,10 +73,11 @@ Peer PeerDiscovery::peerById(const QString &id) const {
     return m_peers.value(id);
 }
 
-QByteArray PeerDiscovery::packet() const {
+QByteArray PeerDiscovery::packet(const QByteArray &cmd) const {
     QJsonObject o;
     o["magic"] = qlm::kMagic;
     o["ver"] = 1;
+    o["cmd"] = QString::fromUtf8(cmd);
     o["id"] = QString::fromUtf8(Config::instance().appId());
     o["name"] = Config::instance().nickname();
     o["host"] = QHostInfo::localHostName();
@@ -85,8 +87,8 @@ QByteArray PeerDiscovery::packet() const {
     return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
 
-void PeerDiscovery::broadcast() {
-    QByteArray data = packet();
+void PeerDiscovery::announce() {
+    QByteArray data = packet("hello");
     m_socket->writeDatagram(data, QHostAddress(QStringLiteral("255.255.255.255")), qlm::kUdpPort);
     // multicast: required for same-host multi-instance (shared UDP port), also
     // covers broadcast-isolated networks
@@ -99,6 +101,18 @@ void PeerDiscovery::broadcast() {
         if (p.ip.isEmpty())
             continue;
         m_socket->writeDatagram(data, QHostAddress(p.ip), qlm::kUdpPort);
+    }
+}
+
+void PeerDiscovery::goodbye() {
+    QByteArray data = packet("bye");
+    m_socket->writeDatagram(data, QHostAddress(QStringLiteral("255.255.255.255")), qlm::kUdpPort);
+    m_socket->writeDatagram(data, QHostAddress(QLatin1String(qlm::kMulticastGroup)), qlm::kUdpPort);
+    const auto keys = m_peers.keys();
+    for (const QString &id : keys) {
+        const Peer &p = m_peers.value(id);
+        if (!p.ip.isEmpty())
+            m_socket->writeDatagram(data, QHostAddress(p.ip), qlm::kUdpPort);
     }
 }
 
@@ -120,6 +134,14 @@ void PeerDiscovery::readPending() {
         if (id.isEmpty() || id == Config::instance().appId())
             continue; // ignore ourselves
 
+        // A "bye" tells us the peer is going offline: drop it immediately,
+        // never reply (replying to a goodbye would resurrect it).
+        if (o["cmd"].toString() == QLatin1String("bye")) {
+            if (m_peers.remove(QString::fromUtf8(id)) > 0)
+                emit peerRemoved(QString::fromUtf8(id));
+            continue;
+        }
+
         Peer p;
         p.id = QString::fromUtf8(id);
         p.name = o["name"].toString();
@@ -136,7 +158,7 @@ void PeerDiscovery::readPending() {
         // Replying to every datagram makes two clients echo each other's
         // replies forever, saturating the UI thread and freezing the app.
         if (isNew)
-            m_socket->writeDatagram(packet(), sender, senderPort ? senderPort : qlm::kUdpPort);
+            m_socket->writeDatagram(packet("hello"), sender, senderPort ? senderPort : qlm::kUdpPort);
     }
 }
 
@@ -159,14 +181,29 @@ void PeerDiscovery::upsert(const Peer &p, bool notify) {
     }
 }
 
-void PeerDiscovery::cleanup() {
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const auto ids = m_peers.keys();
-    for (const QString &id : ids) {
-        const Peer &p = m_peers.value(id);
-        if (now - p.lastSeenMs > qlm::kPeerTimeoutMs) {
-            m_peers.remove(id);
-            emit peerRemoved(id);
+QString PeerDiscovery::localIPv4() const {
+    for (const QNetworkInterface &ni : QNetworkInterface::allInterfaces()) {
+        if (!(ni.flags() & QNetworkInterface::IsUp)
+            || !(ni.flags() & QNetworkInterface::IsRunning)
+            || (ni.flags() & QNetworkInterface::IsLoopBack))
+            continue;
+        const auto entries = ni.addressEntries();
+        for (const auto &e : entries) {
+            const QHostAddress a = e.ip();
+            if (a.protocol() == QAbstractSocket::IPv4Protocol && a != QHostAddress::LocalHost
+                && !a.isMulticast())
+                return a.toString();
         }
+    }
+    return {};
+}
+
+void PeerDiscovery::checkNetwork() {
+    const QString ip = localIPv4();
+    if (ip != m_lastLocalIp) {
+        if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
+            qInfo() << "[discovery] local IP changed" << m_lastLocalIp << "->" << ip << ", re-announcing";
+        m_lastLocalIp = ip;
+        announce();
     }
 }

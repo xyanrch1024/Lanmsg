@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Darwin
 
 /// Local network identity helpers (no UIKit dependency).
@@ -41,10 +42,12 @@ public enum NetInfo {
 
 /// LAN peer discovery over a raw POSIX UDP socket bound to the shared port
 /// 24260. Mirrors `PeerDiscovery` on the desktop:
-///   - broadcast to 255.255.255.255 every 3s
-///   - unicast to known peers every 3s
-///   - reply to a sender immediately
-///   - drop peers not seen for 10s
+///   - announce (broadcast "hello") once at startup and when the network path
+///     changes (new Wi-Fi / VPN / IP change)
+///   - reply once to a brand-new peer
+///   - explicit "bye" on shutdown removes us from peers immediately
+/// No periodic keep-alive broadcast; peers are dropped only when a "bye"
+/// arrives (a crashed peer lingers until we re-announce/restart).
 /// Multicast joining is intentionally skipped on iOS (requires the App Store
 /// "multicast-networking" entitlement and is unnecessary for a single
 /// instance per device).
@@ -55,12 +58,11 @@ public final class Discovery {
 
     private let fd: Int32
     private let queue = DispatchQueue(label: "qlanmsg.discovery")
+    private let lock = NSLock()
     private let settings: SettingsStore
     private let tcpPort: UInt16
     private var peers: [String: Peer] = [:]
-    private var added: Set<String> = []
-    private var broadcastTimer: DispatchSourceTimer?
-    private var cleanupTimer: DispatchSourceTimer?
+    private var pathMonitor: NWPathMonitor?
     private var running = false
 
     public init(settings: SettingsStore, tcpPort: UInt16) {
@@ -92,57 +94,97 @@ public final class Discovery {
         running = true
         queue.async { [weak self] in self?.readLoop() }
 
-        let bt = DispatchSource.makeTimerSource(queue: queue)
-        bt.schedule(deadline: .now() + ProtocolSpec.discoveryInterval,
-                    repeating: ProtocolSpec.discoveryInterval)
-        bt.setEventHandler { [weak self] in self?.broadcast() }
-        broadcastTimer = bt
-        bt.resume()
+        // Announce once at startup. No periodic keep-alive. The discovery
+        // `queue` is occupied by the blocking readLoop, so broadcast from here
+        // directly (sendto is thread-safe and peers is lock-guarded).
+        broadcast()
 
-        let ct = DispatchSource.makeTimerSource(queue: queue)
-        ct.schedule(deadline: .now() + 2.0, repeating: 2.0)
-        ct.setEventHandler { [weak self] in self?.cleanup() }
-        cleanupTimer = ct
-        ct.resume()
+        // Re-announce when the network path changes (new Wi-Fi / VPN / IP
+        // change) so the new network segment can still discover us.
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            if path.status == .satisfied {
+                self?.broadcast()
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "qlanmsg.pathmonitor"))
+        pathMonitor = monitor
     }
 
     public func stop() {
         running = false
-        broadcastTimer?.cancel()
-        broadcastTimer = nil
-        cleanupTimer?.cancel()
-        cleanupTimer = nil
+        pathMonitor?.cancel()
+        pathMonitor = nil
         if fd >= 0 { close(fd) }
     }
 
-    public func peer(byId id: String) -> Peer? { peers[id] }
-
-    public func peer(byIp ip: String) -> Peer? {
-        peers.values.first { $0.ip == ip }
+    /// Re-announce our presence (called on foreground / settings change).
+    public func announce() {
+        guard running else { return }
+        broadcast()
     }
 
-    public var peerList: [Peer] { Array(peers.values) }
+    /// Tell every known peer we are going offline so they drop us immediately.
+    public func goodbye() {
+        guard running else { return }
+        var o = packetFields()
+        o["cmd"] = "bye"
+        guard let data = try? JSONSerialization.data(withJSONObject: o, options: []) else { return }
+        lock.lock()
+        let targets = peers.values.map { $0.ip }.filter { !$0.isEmpty }
+        lock.unlock()
+        sendPacket(data, to: ProtocolSpec.broadcastAddress, port: ProtocolSpec.udpPort)
+        for ip in targets {
+            sendPacket(data, to: ip, port: ProtocolSpec.udpPort)
+        }
+    }
+
+    public func peer(byId id: String) -> Peer? {
+        lock.lock()
+        defer { lock.unlock() }
+        return peers[id]
+    }
+
+    public func peer(byIp ip: String) -> Peer? {
+        lock.lock()
+        defer { lock.unlock() }
+        return peers.values.first { $0.ip == ip }
+    }
+
+    public var peerList: [Peer] {
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(peers.values)
+    }
 
     // MARK: - sending
 
-    private func packet() -> Data {
+    private func packetFields() -> [String: Any] {
         var o: [String: Any] = [:]
         o["magic"] = ProtocolSpec.magic
         o["ver"] = 1
+        o["cmd"] = "hello"
         o["id"] = settings.appId
         o["name"] = settings.nickname
         o["host"] = NetInfo.hostName
         o["os"] = NetInfo.osString
         o["app"] = ProtocolSpec.appVersion
         o["port"] = Int(tcpPort)
-        return (try? JSONSerialization.data(withJSONObject: o, options: [])) ?? Data()
+        return o
+    }
+
+    private func packet() -> Data {
+        (try? JSONSerialization.data(withJSONObject: packetFields(), options: [])) ?? Data()
     }
 
     private func broadcast() {
         let data = packet()
         sendPacket(data, to: ProtocolSpec.broadcastAddress, port: ProtocolSpec.udpPort)
-        for p in peers.values where !p.ip.isEmpty {
-            sendPacket(data, to: p.ip, port: ProtocolSpec.udpPort)
+        lock.lock()
+        let ips = peers.values.map { $0.ip }.filter { !$0.isEmpty }
+        lock.unlock()
+        for ip in ips {
+            sendPacket(data, to: ip, port: ProtocolSpec.udpPort)
         }
     }
 
@@ -193,6 +235,18 @@ public final class Discovery {
               !id.isEmpty,
               id != settings.appId else { return }
 
+        // A "bye" tells us the peer is going offline: drop it immediately,
+        // never reply (replying to a goodbye would resurrect it).
+        if (o["cmd"] as? String) == "bye" {
+            lock.lock()
+            let removed = peers.removeValue(forKey: id) != nil
+            lock.unlock()
+            if removed {
+                onPeerRemoved?(id)
+            }
+            return
+        }
+
         let p = Peer(id: id,
                      name: o["name"] as? String ?? "",
                      host: o["host"] as? String ?? "",
@@ -213,25 +267,17 @@ public final class Discovery {
     }
 
     private func upsert(_ p: Peer, notify: Bool) {
+        lock.lock()
         if let old = peers[p.id] {
             peers[p.id] = p
+            lock.unlock()
             if notify && (old.ip != p.ip || old.name != p.name) {
                 onPeerUpdated?(p)
             }
         } else {
             peers[p.id] = p
+            lock.unlock()
             if notify { onPeerAdded?(p) }
-        }
-    }
-
-    private func cleanup() {
-        let now = Date()
-        let expired = peers.compactMap { id, p -> String? in
-            now.timeIntervalSince(p.lastSeen) > ProtocolSpec.peerTimeout ? id : nil
-        }
-        for id in expired {
-            peers.removeValue(forKey: id)
-            onPeerRemoved?(id)
         }
     }
 

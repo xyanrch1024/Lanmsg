@@ -62,6 +62,16 @@ final class AppModel: ObservableObject {
         transport.startListening()
     }
 
+    /// App entering background / about to be killed: tell peers we are offline.
+    func sendGoodbye() {
+        discovery.goodbye()
+    }
+
+    /// App returning to foreground: re-announce so late-joining peers find us.
+    func sendAnnounce() {
+        discovery.announce()
+    }
+
     private func mainAsync(_ block: @escaping () -> Void) {
         DispatchQueue.main.async(execute: block)
     }
