@@ -10,6 +10,10 @@
 
 using qlm::FileOffer;
 
+#ifdef QLANMSG_HAS_MULTIMEDIA
+class QSoundEffect;
+#endif
+
 class ChatWidget;
 class FileReceiver;
 class FileSender;
@@ -18,8 +22,11 @@ class PeerDiscovery;
 class RemoteDialog;
 class RemoteServer;
 class TransferWidget;
+class QGraphicsOpacityEffect;
+class QLabel;
 class QListWidget;
 class QListWidgetItem;
+class QTimer;
 
 struct ChatEntry {
     QString who;
@@ -67,6 +74,9 @@ private:
                         const QString &name, qint64 total);
     void appendChatEntry(const QString &ip, const QString &who, const QString &text, qint64 ts, bool isSelf);
     void clearFinishedTransfers();
+    void showNotification(const QString &who, const QString &text);
+    void hideNotification();
+    void playNotificationSound();
 
     PeerDiscovery *m_discovery = nullptr;
     NetworkService *m_net = nullptr;
@@ -81,6 +91,13 @@ private:
     QHash<QString, FileSender *> m_senders;     // token -> sender
     QHash<QString, FileReceiver *> m_receivers; // token -> receiver
     QHash<QString, RemoteDialog *> m_remoteDialogs; // "ip|token" -> dialog
+
+    QLabel *m_bubble = nullptr;
+    QTimer *m_bubbleTimer = nullptr;
+    QGraphicsOpacityEffect *m_bubbleOpacity = nullptr;
+#ifdef QLANMSG_HAS_MULTIMEDIA
+    QSoundEffect *m_sound = nullptr;
+#endif
 
     QString m_currentIp;
 };

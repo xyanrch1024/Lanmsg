@@ -19,8 +19,10 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -30,11 +32,15 @@
 #include <QProgressBar>
 #include <QSplitter>
 #include <QStatusBar>
-#include <QToolBar>
 #include <QTimer>
+#include <QToolBar>
 #include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
+
+#ifdef QLANMSG_HAS_MULTIMEDIA
+#include <QSoundEffect>
+#endif
 
 #include <QDebug>
 
@@ -145,6 +151,27 @@ void MainWindow::buildUi() {
     splitter->setStretchFactor(1, 5);
     splitter->setSizes({300, 700});
     setCentralWidget(splitter);
+
+    // Floating bubble notification (top-right of the chat area).
+    m_bubble = new QLabel(this);
+    m_bubble->setStyleSheet(
+        "QLabel { background: rgba(40,40,45,225); color: white; border-radius: 10px;"
+        " padding: 8px 12px; font-size: 13px; }");
+    m_bubble->setWordWrap(true);
+    m_bubble->setMaximumWidth(360);
+    m_bubble->hide();
+    m_bubbleOpacity = new QGraphicsOpacityEffect(m_bubble);
+    m_bubble->setGraphicsEffect(m_bubbleOpacity);
+    m_bubbleTimer = new QTimer(this);
+    m_bubbleTimer->setSingleShot(true);
+    m_bubbleTimer->setInterval(4000);
+    connect(m_bubbleTimer, &QTimer::timeout, this, &MainWindow::hideNotification);
+
+#ifdef QLANMSG_HAS_MULTIMEDIA
+    m_sound = new QSoundEffect(this);
+    m_sound->setSource(QUrl(QStringLiteral("qrc:/notify.wav")));
+    m_sound->setVolume(0.8f);
+#endif
 
     statusBar()->showMessage(QStringLiteral("本机 IP: %1   端口: %2")
                                  .arg(m_net->localIpv4())
@@ -361,6 +388,45 @@ void MainWindow::onChatReceived(const QString &ip, const QString &text, qint64 t
         m_chat->appendMessage(e.who, e.text, e.ts, false);
     else
         setWindowTitle(QStringLiteral("QLanMsg - %1 发来新消息").arg(who));
+    showNotification(who, text);
+    playNotificationSound();
+}
+
+void MainWindow::showNotification(const QString &who, const QString &text) {
+    if (!m_bubble)
+        return;
+    QString t = text;
+    t.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    if (t.size() > 60)
+        t = t.left(60) + QStringLiteral("…");
+    m_bubble->setText(QStringLiteral("<b>%1</b><br>%2").arg(who.toHtmlEscaped(), t.toHtmlEscaped()));
+    m_bubble->adjustSize();
+    m_bubble->show();
+    m_bubble->raise();
+    // top-right corner of the chat area, with a small margin
+    const int margin = 12;
+    const int x = m_chat->width() - m_bubble->width() - margin;
+    const int y = m_chat->mapTo(this, QPoint(0, 0)).y() + margin;
+    m_bubble->move(x < 0 ? margin : x, y);
+    m_bubbleOpacity->setOpacity(1.0);
+    m_bubbleTimer->start();
+}
+
+void MainWindow::hideNotification() {
+    if (!m_bubble)
+        return;
+    m_bubble->hide();
+}
+
+void MainWindow::playNotificationSound() {
+#ifdef QLANMSG_HAS_MULTIMEDIA
+    if (m_sound && m_sound->status() == QSoundEffect::Ready)
+        m_sound->play();
+    else
+        QApplication::beep();
+#else
+    QApplication::beep();
+#endif
 }
 
 void MainWindow::sendFileTo(const Peer &peer) {

@@ -3,7 +3,7 @@
 #include <QWidget>
 
 class QLabel;
-class QLineEdit;
+class QPushButton;
 class QTextEdit;
 
 class ChatWidget : public QWidget {
@@ -19,8 +19,14 @@ public:
 signals:
     void sendRequested(const QString &text);
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
+    void doSend();
+
     QLabel *m_title = nullptr;
     QTextEdit *m_log = nullptr;
-    QLineEdit *m_input = nullptr;
+    QTextEdit *m_input = nullptr;
+    QPushButton *m_sendButton = nullptr;
 };

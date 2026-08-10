@@ -8,6 +8,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 COMPONENTS Multimedia QUIET)
 
 set(SOURCES
     src/main.cpp
@@ -23,6 +24,7 @@ set(SOURCES
     src/ui/TransferWidget.cpp
     src/ui/RemoteDialog.cpp
     src/ui/SettingsDialog.cpp
+    resources/resources.qrc
 )
 
 if(WIN32)
@@ -34,6 +36,16 @@ endif()
 qt_add_executable(qlanmsg ${SOURCES})
 target_include_directories(qlanmsg PRIVATE src)
 target_link_libraries(qlanmsg PRIVATE Qt6::Widgets Qt6::Network)
+
+# Optional Qt Multimedia: real notification sound via QSoundEffect.
+# Falls back to QApplication::beep() when the module is unavailable.
+if(Qt6Multimedia_FOUND)
+    target_link_libraries(qlanmsg PRIVATE Qt6::Multimedia)
+    target_compile_definitions(qlanmsg PRIVATE QLANMSG_HAS_MULTIMEDIA)
+    message(STATUS "Qt Multimedia found - notification sound enabled")
+else()
+    message(STATUS "Qt Multimedia not found - using system beep fallback")
+endif()
 
 if(WIN32)
     set_target_properties(qlanmsg PROPERTIES WIN32_EXECUTABLE TRUE)
