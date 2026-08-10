@@ -212,7 +212,7 @@ void MainWindow::buildUi() {
 
 #ifdef QLANMSG_HAS_MULTIMEDIA
     m_sound = new QSoundEffect(this);
-    m_sound->setSource(QUrl(QStringLiteral("qrc:/notify.wav")));
+    m_sound->setSource(QUrl(QStringLiteral("qrc:/msgnotify.wav")));
     m_sound->setVolume(0.8f);
 #endif
 
