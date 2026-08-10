@@ -21,9 +21,8 @@ class NetworkService;
 class PeerDiscovery;
 class RemoteDialog;
 class RemoteServer;
+class QSystemTrayIcon;
 class TransferWidget;
-class QGraphicsOpacityEffect;
-class QLabel;
 class QListWidget;
 class QListWidgetItem;
 class QTimer;
@@ -59,6 +58,7 @@ private slots:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private:
     void buildUi();
@@ -74,8 +74,7 @@ private:
                         const QString &name, qint64 total);
     void appendChatEntry(const QString &ip, const QString &who, const QString &text, qint64 ts, bool isSelf);
     void clearFinishedTransfers();
-    void showNotification(const QString &who, const QString &text);
-    void hideNotification();
+    void notifyNewMessage(const QString &who, const QString &text);
     void playNotificationSound();
 
     PeerDiscovery *m_discovery = nullptr;
@@ -92,9 +91,7 @@ private:
     QHash<QString, FileReceiver *> m_receivers; // token -> receiver
     QHash<QString, RemoteDialog *> m_remoteDialogs; // "ip|token" -> dialog
 
-    QLabel *m_bubble = nullptr;
-    QTimer *m_bubbleTimer = nullptr;
-    QGraphicsOpacityEffect *m_bubbleOpacity = nullptr;
+    QSystemTrayIcon *m_tray = nullptr;
 #ifdef QLANMSG_HAS_MULTIMEDIA
     QSoundEffect *m_sound = nullptr;
 #endif

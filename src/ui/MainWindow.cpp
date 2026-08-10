@@ -13,14 +13,15 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDateTime>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -29,9 +30,12 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QNetworkInterface>
+#include <QPainter>
+#include <QPixmap>
 #include <QProgressBar>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QSystemTrayIcon>
 #include <QTimer>
 #include <QToolBar>
 #include <QUrl>
@@ -118,6 +122,20 @@ MainWindow::~MainWindow() {
         m_discovery->goodbye();
 }
 
+void MainWindow::closeEvent(QCloseEvent *event) {
+    // Closing hides to the tray (if one is available) instead of quitting;
+    // use the tray menu "退出" to really quit.
+    if (m_tray) {
+        hide();
+        m_tray->showMessage(QStringLiteral("QLanMsg"),
+                            QStringLiteral("已最小化到托盘，点击托盘图标可恢复。"),
+                            QSystemTrayIcon::Information, 2000);
+        event->ignore();
+        return;
+    }
+    QMainWindow::closeEvent(event);
+}
+
 void MainWindow::buildUi() {
     setWindowTitle(QStringLiteral("QLanMsg - 局域网聊天与远程控制"));
     resize(1000, 640);
@@ -152,20 +170,45 @@ void MainWindow::buildUi() {
     splitter->setSizes({300, 700});
     setCentralWidget(splitter);
 
-    // Floating bubble notification (top-right of the chat area).
-    m_bubble = new QLabel(this);
-    m_bubble->setStyleSheet(
-        "QLabel { background: rgba(40,40,45,225); color: white; border-radius: 10px;"
-        " padding: 8px 12px; font-size: 13px; }");
-    m_bubble->setWordWrap(true);
-    m_bubble->setMaximumWidth(360);
-    m_bubble->hide();
-    m_bubbleOpacity = new QGraphicsOpacityEffect(m_bubble);
-    m_bubble->setGraphicsEffect(m_bubbleOpacity);
-    m_bubbleTimer = new QTimer(this);
-    m_bubbleTimer->setSingleShot(true);
-    m_bubbleTimer->setInterval(4000);
-    connect(m_bubbleTimer, &QTimer::timeout, this, &MainWindow::hideNotification);
+    // System tray icon: lets the window hide to tray and shows balloon
+    // notifications for incoming messages while hidden.
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        QPixmap pm(64, 64);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x3b, 0x82, 0xf6));
+        p.drawRoundedRect(4, 4, 56, 56, 14, 14);
+        p.setPen(Qt::white);
+        QFont f = p.font();
+        f.setBold(true);
+        f.setPointSize(26);
+        p.setFont(f);
+        p.drawText(pm.rect(), Qt::AlignCenter, QStringLiteral("Q"));
+        p.end();
+
+        m_tray = new QSystemTrayIcon(QIcon(pm), this);
+        m_tray->setToolTip(QStringLiteral("QLanMsg - 局域网聊天与远程控制"));
+        auto *trayMenu = new QMenu(this);
+        QAction *showAct = trayMenu->addAction(QStringLiteral("显示主窗口"));
+        connect(showAct, &QAction::triggered, this, [this] {
+            showNormal();
+            raise();
+            activateWindow();
+        });
+        QAction *quitAct = trayMenu->addAction(QStringLiteral("退出"));
+        connect(quitAct, &QAction::triggered, qApp, &QApplication::quit);
+        m_tray->setContextMenu(trayMenu);
+        connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::DoubleClick) {
+                showNormal();
+                raise();
+                activateWindow();
+            }
+        });
+        m_tray->show();
+    }
 
 #ifdef QLANMSG_HAS_MULTIMEDIA
     m_sound = new QSoundEffect(this);
@@ -388,34 +431,20 @@ void MainWindow::onChatReceived(const QString &ip, const QString &text, qint64 t
         m_chat->appendMessage(e.who, e.text, e.ts, false);
     else
         setWindowTitle(QStringLiteral("QLanMsg - %1 发来新消息").arg(who));
-    showNotification(who, text);
+    notifyNewMessage(who, text);
     playNotificationSound();
 }
 
-void MainWindow::showNotification(const QString &who, const QString &text) {
-    if (!m_bubble)
-        return;
-    QString t = text;
-    t.replace(QLatin1Char('\n'), QLatin1Char(' '));
-    if (t.size() > 60)
-        t = t.left(60) + QStringLiteral("…");
-    m_bubble->setText(QStringLiteral("<b>%1</b><br>%2").arg(who.toHtmlEscaped(), t.toHtmlEscaped()));
-    m_bubble->adjustSize();
-    m_bubble->show();
-    m_bubble->raise();
-    // top-right corner of the chat area, with a small margin
-    const int margin = 12;
-    const int x = m_chat->width() - m_bubble->width() - margin;
-    const int y = m_chat->mapTo(this, QPoint(0, 0)).y() + margin;
-    m_bubble->move(x < 0 ? margin : x, y);
-    m_bubbleOpacity->setOpacity(1.0);
-    m_bubbleTimer->start();
-}
-
-void MainWindow::hideNotification() {
-    if (!m_bubble)
-        return;
-    m_bubble->hide();
+void MainWindow::notifyNewMessage(const QString &who, const QString &text) {
+    // Only pop a balloon when the window is minimized or hidden to the tray;
+    // when it's visible the chat is already on screen.
+    if (m_tray && (isMinimized() || !isVisible())) {
+        QString t = text;
+        t.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (t.size() > 80)
+            t = t.left(80) + QStringLiteral("…");
+        m_tray->showMessage(who, t, QSystemTrayIcon::Information, 3000);
+    }
 }
 
 void MainWindow::playNotificationSound() {
