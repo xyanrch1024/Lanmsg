@@ -9,12 +9,12 @@
 #include "ui/ChatWidget.h"
 #include "ui/RemoteDialog.h"
 #include "ui/SettingsDialog.h"
-#include "ui/TransferWidget.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -32,7 +32,6 @@
 #include <QNetworkInterface>
 #include <QPainter>
 #include <QPixmap>
-#include <QProgressBar>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QSystemTrayIcon>
@@ -84,6 +83,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_peerList, &QWidget::customContextMenuRequested, this, &MainWindow::onPeerMenuRequested);
 
     connect(m_chat, &ChatWidget::sendRequested, this, &MainWindow::onChatSend);
+    connect(m_chat, &ChatWidget::attachRequested, this, &MainWindow::onAttachRequested);
+    connect(m_chat, &ChatWidget::cancelFileRequested, this, &MainWindow::onCancelFileRequested);
+    connect(m_chat, &ChatWidget::openFileRequested, this, &MainWindow::onOpenFileRequested);
     connect(m_net, &NetworkService::chatReceived, this, &MainWindow::onChatReceived);
 
     connect(m_net, &NetworkService::fileOfferReceived, this, &MainWindow::onFileOffer);
@@ -110,8 +112,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Drag & drop a file from the OS file manager to send it.
     for (QWidget *dropTarget : {static_cast<QWidget *>(m_peerList),
-                                static_cast<QWidget *>(m_chat),
-                                static_cast<QWidget *>(m_transfer)}) {
+                                static_cast<QWidget *>(m_chat)}) {
         dropTarget->setAcceptDrops(true);
         dropTarget->installEventFilter(this);
     }
@@ -146,25 +147,43 @@ void MainWindow::buildUi() {
     settingsAction->setShortcut(QKeySequence::Preferences);
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettings);
 
+    m_peerDelegate = new PeerListDelegate(this);
     m_peerList = new QListWidget(this);
-    m_peerList->setAlternatingRowColors(true);
+    m_peerList->setObjectName(QStringLiteral("peerList"));
+    m_peerList->setItemDelegate(m_peerDelegate);
+    m_peerList->setMouseTracking(true);
+    m_peerList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_peerList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_peerList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_peerList->setContextMenuPolicy(Qt::CustomContextMenu);
 
-    m_chat = new ChatWidget(this);
-    m_transfer = new TransferWidget(this);
+    m_search = new QLineEdit(this);
+    m_search->setObjectName(QStringLiteral("searchBox"));
+    m_search->setPlaceholderText(QStringLiteral("搜索设备…"));
+    m_search->setClearButtonEnabled(true);
+    m_search->setFixedHeight(32);
+    connect(m_search, &QLineEdit::textChanged, this, [this](const QString &s) {
+        for (int i = 0; i < m_peerList->count(); ++i) {
+            QListWidgetItem *it = m_peerList->item(i);
+            const bool match = s.isEmpty()
+                || it->data(Qt::UserRole + 2).toString().contains(s, Qt::CaseInsensitive)
+                || it->data(Qt::UserRole + 1).toString().contains(s, Qt::CaseInsensitive);
+            it->setHidden(!match);
+        }
+    });
 
-    // Chat on top, transfer list (with progress bars) pinned to the bottom.
-    auto *rightSplit = new QSplitter(Qt::Vertical, this);
-    rightSplit->addWidget(m_chat);
-    rightSplit->addWidget(m_transfer);
-    rightSplit->setStretchFactor(0, 3);
-    rightSplit->setStretchFactor(1, 1);
-    rightSplit->setSizes({460, 180});
-    rightSplit->setChildrenCollapsible(true);
+    auto *leftPanel = new QWidget(this);
+    auto *leftLay = new QVBoxLayout(leftPanel);
+    leftLay->setContentsMargins(8, 8, 0, 0);
+    leftLay->setSpacing(6);
+    leftLay->addWidget(m_search);
+    leftLay->addWidget(m_peerList, 1);
+
+    m_chat = new ChatWidget(this);
 
     auto *splitter = new QSplitter(this);
-    splitter->addWidget(m_peerList);
-    splitter->addWidget(rightSplit);
+    splitter->addWidget(leftPanel);
+    splitter->addWidget(m_chat);
     splitter->setStretchFactor(0, 2);
     splitter->setStretchFactor(1, 5);
     splitter->setSizes({300, 700});
@@ -223,7 +242,7 @@ void MainWindow::buildUi() {
     // auto-clean finished transfer rows after a while
     auto *cleanTimer = new QTimer(this);
     cleanTimer->setInterval(30000);
-    connect(cleanTimer, &QTimer::timeout, this, &MainWindow::clearFinishedTransfers);
+    connect(cleanTimer, &QTimer::timeout, this, &MainWindow::clearFinishedCards);
     cleanTimer->start();
 
     // test-only: QLANMSG_TEST_CHAT="ip1,ip2" sends a chat to those peers after startup
@@ -269,20 +288,9 @@ void MainWindow::buildUi() {
                 tryFile->stop();
                 if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
                     qInfo() << "[test] sending file to" << fIp << fPath;
-                const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
                 m_net->ensureSession(p);
-                auto *sender = new FileSender(fIp, token, fPath, m_net, this);
-                m_senders.insert(token, sender);
-                connect(sender, &FileSender::progress, this,
-                        [this](const QString &t, qint64 sent, qint64 total) { m_transfer->updateProgress(t, sent, total); });
-                connect(sender, &FileSender::finished, this, [this, token](const QString &t, bool ok, const QString &info) {
-                    if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
-                        qInfo() << "[test] file send finished ok=" << ok << info;
-                    m_transfer->setStatus(t, true, info);
-                    if (FileSender *s = m_senders.take(t))
-                        s->deleteLater();
-                });
-                sender->start();
+                const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                startFileSend(p, fPath, token);
             });
             tryFile->start(500);
         }
@@ -331,11 +339,19 @@ void MainWindow::onPeerSelected(QListWidgetItem *current, QListWidgetItem *previ
     if (p.id.isEmpty())
         return;
     m_currentIp = p.ip;
-    m_chat->setPeerName(p.name);
+    m_unread.remove(p.ip);
+    current->setData(Qt::UserRole + 5, 0);
+    m_peerList->viewport()->update();
+
+    const QString os = p.os.isEmpty() ? p.host : p.os;
+    m_chat->setPeerInfo(p.name, QStringLiteral("%1 · %2").arg(p.ip, os));
     m_chat->clearLog();
     const auto entries = m_history.value(p.ip);
     for (const ChatEntry &e : entries)
         m_chat->appendMessage(e.who, e.text, e.ts, e.who == QStringLiteral("我"));
+    const auto cards = m_fileCards.value(p.ip);
+    for (auto it = cards.begin(); it != cards.end(); ++it)
+        renderCard(p.ip, it.key());
     m_chat->setEnabled(true);
 }
 
@@ -351,11 +367,31 @@ void MainWindow::updatePeerItem(const Peer &p) {
     if (!it) {
         it = new QListWidgetItem;
         it->setData(Qt::UserRole, p.id);
+        it->setSizeHint(QSize(200, 64));
         m_peerList->addItem(it);
     }
-    it->setText(QStringLiteral("● %1\n%2  ·  %3").arg(p.name, p.ip, p.os.isEmpty() ? p.host : p.os));
+    it->setData(Qt::UserRole, p.id);
     it->setData(Qt::UserRole + 1, p.ip);
+    it->setData(Qt::UserRole + 2, p.name);
+
+    const auto &hist = m_history.value(p.ip);
+    QString subtitle;
+    QString time;
+    if (!hist.isEmpty()) {
+        const ChatEntry &last = hist.last();
+        subtitle = last.text;
+        subtitle.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (subtitle.size() > 40)
+            subtitle = subtitle.left(40) + QStringLiteral("…");
+        time = QDateTime::fromMSecsSinceEpoch(last.ts).toString(QStringLiteral("HH:mm"));
+    } else {
+        subtitle = QStringLiteral("%1  ·  %2").arg(p.ip, p.os.isEmpty() ? p.host : p.os);
+    }
+    it->setData(Qt::UserRole + 3, subtitle);
+    it->setData(Qt::UserRole + 4, time);
+    it->setData(Qt::UserRole + 5, m_unread.value(p.ip, 0));
     it->setToolTip(QStringLiteral("%1 (%2)\n主机: %3\n系统: %4").arg(p.name, p.ip, p.host, p.os));
+    m_peerList->viewport()->update();
 }
 
 void MainWindow::removePeerItem(const QString &id) {
@@ -427,10 +463,14 @@ void MainWindow::onChatReceived(const QString &ip, const QString &text, qint64 t
     const QString who = p.name.isEmpty() ? ip : p.name;
     ChatEntry e{who, text, ts};
     m_history[ip].append(e);
-    if (ip == m_currentIp)
+    if (ip == m_currentIp) {
         m_chat->appendMessage(e.who, e.text, e.ts, false);
-    else
+    } else {
+        m_unread[ip] = m_unread.value(ip) + 1;
         setWindowTitle(QStringLiteral("QLanMsg - %1 发来新消息").arg(who));
+    }
+    if (!p.id.isEmpty())
+        updatePeerItem(p); // refresh list preview / time / unread badge
     notifyNewMessage(who, text);
     playNotificationSound();
 }
@@ -468,26 +508,53 @@ void MainWindow::sendFileTo(const Peer &peer) {
 void MainWindow::sendFileTo(const Peer &peer, const QString &path) {
     if (path.isEmpty())
         return;
-    const QFileInfo info(path);
     const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    startFileSend(peer, path, token);
+}
+
+void MainWindow::startFileSend(const Peer &peer, const QString &path, const QString &token) {
+    if (path.isEmpty())
+        return;
+    const QFileInfo info(path);
     const QString name = info.fileName();
     const qint64 size = info.size();
 
     m_net->ensureSession(peer);
     auto *sender = new FileSender(peer.ip, token, path, m_net, this);
     m_senders.insert(token, sender);
-    appendTransfer(TransferDirection::Send, peer.name, token, name, size);
-    connect(sender, &FileSender::progress, this, [this](const QString &t, qint64 sent, qint64 total) {
-        m_transfer->updateProgress(t, sent, total);
-    });
-    connect(sender, &FileSender::finished, this, [this, ip = peer.ip, name](const QString &t, bool ok, const QString &info) {
-        m_transfer->setStatus(t, true, ok ? QStringLiteral("完成 - %1").arg(info) : QStringLiteral("失败 - %1").arg(info));
-        const QString text = ok ? QStringLiteral("文件「%1」发送完成").arg(name)
-                                : QStringLiteral("文件「%1」发送失败: %2").arg(name, info);
-        appendChatEntry(ip, QStringLiteral("我"), text, QDateTime::currentMSecsSinceEpoch(), true);
-        if (FileSender *s = m_senders.take(t))
-            s->deleteLater();
-    });
+
+    FileCardState &card = m_fileCards[peer.ip][token];
+    card.token = token;
+    card.isSend = true;
+    card.peerName = peer.name;
+    card.name = name;
+    card.total = size;
+    card.path = path;
+    if (peer.ip == m_currentIp)
+        m_chat->addFileCard(token, true, name, size, path);
+
+    connect(sender, &FileSender::progress, this,
+            [this, ip = peer.ip](const QString &t, qint64 sent, qint64 total) {
+                FileCardState &c = m_fileCards[ip][t];
+                c.done = sent;
+                c.total = total;
+                if (ip == m_currentIp)
+                    m_chat->updateFileCard(t, sent, total);
+            });
+    connect(sender, &FileSender::finished, this,
+            [this, ip = peer.ip, name](const QString &t, bool ok, const QString &info) {
+                FileCardState &c = m_fileCards[ip][t];
+                c.finished = true;
+                c.ok = ok;
+                c.statusText = ok ? QStringLiteral("完成 · %1").arg(fileSizeText(c.total)) : info;
+                if (ip == m_currentIp)
+                    m_chat->setFileCardStatus(t, ok, c.statusText);
+                const QString text = ok ? QStringLiteral("文件「%1」发送完成").arg(name)
+                                        : QStringLiteral("文件「%1」发送失败: %2").arg(name, info);
+                appendChatEntry(ip, QStringLiteral("我"), text, QDateTime::currentMSecsSinceEpoch(), true);
+                if (FileSender *s = m_senders.take(t))
+                    s->deleteLater();
+            });
     sender->start();
 
     appendChatEntry(peer.ip, QStringLiteral("我"),
@@ -535,14 +602,34 @@ void MainWindow::onFileOffer(const QString &ip, const FileOffer &offer) {
 
     auto *receiver = new FileReceiver(ip, offer.token, savePath, offer.size, m_net, this);
     m_receivers.insert(offer.token, receiver);
-    appendTransfer(TransferDirection::Receive, who, offer.token, offer.name, offer.size);
-    connect(receiver, &FileReceiver::progress, this, [this](const QString &t, qint64 received, qint64 total) {
-        m_transfer->updateProgress(t, received, total);
-    });
+
+    FileCardState &card = m_fileCards[ip][offer.token];
+    card.token = offer.token;
+    card.isSend = false;
+    card.peerName = who;
+    card.name = offer.name;
+    card.total = offer.size;
+    card.path = savePath;
+    if (ip == m_currentIp)
+        m_chat->addFileCard(offer.token, false, offer.name, offer.size, savePath);
+
+    connect(receiver, &FileReceiver::progress, this,
+            [this, ip](const QString &t, qint64 received, qint64 total) {
+                FileCardState &c = m_fileCards[ip][t];
+                c.done = received;
+                c.total = total;
+                if (ip == m_currentIp)
+                    m_chat->updateFileCard(t, received, total);
+            });
     connect(receiver, &FileReceiver::finished, this, [this, ip, who, fileName = offer.name](const QString &t, bool ok, const QString &info) {
         if (qEnvironmentVariableIsSet("QLANMSG_LOG"))
             qInfo() << "[test] file receive finished ok=" << ok << info;
-        m_transfer->setStatus(t, true, ok ? QStringLiteral("完成 - %1").arg(info) : QStringLiteral("失败 - %1").arg(info));
+        FileCardState &c = m_fileCards[ip][t];
+        c.finished = true;
+        c.ok = ok;
+        c.statusText = ok ? QStringLiteral("完成 · %1").arg(fileSizeText(c.total)) : info;
+        if (ip == m_currentIp)
+            m_chat->setFileCardStatus(t, ok, c.statusText);
         const QString text = ok ? QStringLiteral("文件「%1」接收完成").arg(fileName)
                                 : QStringLiteral("文件「%1」接收失败: %2").arg(fileName, info);
         appendChatEntry(ip, who, text, QDateTime::currentMSecsSinceEpoch(), false);
@@ -575,29 +662,73 @@ void MainWindow::onFileCancel(const QString &ip, const QString &token, const QSt
         s->onCancel(ip, token, reason);
 }
 
-void MainWindow::appendTransfer(TransferDirection dir, const QString &peerName, const QString &token,
-                                const QString &name, qint64 total) {
-    TransferItem item;
-    item.token = token;
-    item.direction = dir;
-    item.peerName = peerName;
-    item.name = name;
-    item.total = total;
-    item.done = 0;
-    m_transfer->addItem(item);
-}
-
 void MainWindow::appendChatEntry(const QString &ip, const QString &who, const QString &text, qint64 ts, bool isSelf) {
     m_history[ip].append(ChatEntry{who, text, ts});
     if (ip == m_currentIp)
         m_chat->appendMessage(who, text, ts, isSelf);
 }
 
-void MainWindow::clearFinishedTransfers() {
-    for (int i = m_transfer->count() - 1; i >= 0; --i) {
-        QListWidgetItem *it = m_transfer->item(i);
-        if (!(it->flags() & Qt::ItemIsEnabled))
-            delete m_transfer->takeItem(i);
+QString MainWindow::ipByToken(const QString &token) const {
+    for (auto it = m_fileCards.begin(); it != m_fileCards.end(); ++it)
+        if (it.value().contains(token))
+            return it.key();
+    return QString();
+}
+
+void MainWindow::renderCard(const QString &ip, const QString &token) {
+    if (ip != m_currentIp)
+        return;
+    const FileCardState &c = m_fileCards.value(ip).value(token);
+    m_chat->addFileCard(token, c.isSend, c.name, c.total, c.path);
+    if (c.finished)
+        m_chat->setFileCardStatus(token, c.ok, c.statusText);
+    else if (c.done > 0)
+        m_chat->updateFileCard(token, c.done, c.total);
+}
+
+void MainWindow::onAttachRequested() {
+    const Peer p = currentPeer();
+    if (p.id.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("请先在左侧选择设备"), 3000);
+        return;
+    }
+    sendFileTo(p);
+}
+
+void MainWindow::onCancelFileRequested(const QString &token) {
+    if (FileSender *s = m_senders.value(token))
+        s->cancel();
+    else if (FileReceiver *r = m_receivers.value(token))
+        r->cancel();
+}
+
+void MainWindow::onOpenFileRequested(const QString &token) {
+    const QString ip = ipByToken(token);
+    if (ip.isEmpty())
+        return;
+    const FileCardState &c = m_fileCards.value(ip).value(token);
+    if (!c.finished || !c.ok || c.path.isEmpty())
+        return;
+    if (!QFileInfo::exists(c.path)) {
+        statusBar()->showMessage(QStringLiteral("文件不存在: %1").arg(c.path), 4000);
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(c.path));
+}
+
+void MainWindow::clearFinishedCards() {
+    for (auto it = m_fileCards.begin(); it != m_fileCards.end(); ++it) {
+        bool removedAny = false;
+        const QStringList tokens = it.value().keys();
+        for (const QString &token : tokens) {
+            const FileCardState &c = it.value().value(token);
+            if (c.finished) {
+                it.value().remove(token);
+                removedAny = true;
+            }
+        }
+        if (removedAny && it.key() == m_currentIp)
+            m_chat->removeFinishedCards();
     }
 }
 
@@ -712,7 +843,7 @@ void MainWindow::openSettings() {
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
-    if (watched != m_peerList && watched != m_chat && watched != m_transfer)
+    if (watched != m_peerList && watched != m_chat)
         return QMainWindow::eventFilter(watched, event);
 
     if (event->type() == QEvent::DragEnter) {

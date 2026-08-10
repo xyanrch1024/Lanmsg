@@ -6,7 +6,7 @@
 
 #include "common/Protocol.h"
 #include "discovery/Peer.h"
-#include "ui/TransferWidget.h"
+#include "ui/PeerListDelegate.h"
 
 using qlm::FileOffer;
 
@@ -22,7 +22,7 @@ class PeerDiscovery;
 class RemoteDialog;
 class RemoteServer;
 class QSystemTrayIcon;
-class TransferWidget;
+class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QTimer;
@@ -31,6 +31,19 @@ struct ChatEntry {
     QString who;
     QString text;
     qint64 ts = 0;
+};
+
+struct FileCardState {
+    QString token;
+    bool isSend = false;
+    QString peerName;
+    QString name;
+    QString path;   // local file (source for send, destination for receive)
+    qint64 total = 0;
+    qint64 done = 0;
+    bool finished = false;
+    bool ok = false;
+    QString statusText;
 };
 
 class MainWindow : public QMainWindow {
@@ -54,6 +67,9 @@ private slots:
     void onRcFrame(const QString &ip, const QString &token, const QByteArray &jpeg, int w, int h, qint64 ts);
     void onRcStop(const QString &ip, const QString &token);
     void onSessionClosed(const QString &ip);
+    void onAttachRequested();
+    void onCancelFileRequested(const QString &token);
+    void onOpenFileRequested(const QString &token);
     void openSettings();
 
 protected:
@@ -68,12 +84,13 @@ private:
     void selectPeer(const QString &ip);
     void sendFileTo(const Peer &peer);
     void sendFileTo(const Peer &peer, const QString &path);
+    void startFileSend(const Peer &peer, const QString &path, const QString &token);
     void startRemoteControl(const Peer &peer);
     QString rcKey(const QString &ip, const QString &token) const { return ip + QLatin1Char('|') + token; }
-    void appendTransfer(TransferDirection dir, const QString &peerName, const QString &token,
-                        const QString &name, qint64 total);
+    QString ipByToken(const QString &token) const;
     void appendChatEntry(const QString &ip, const QString &who, const QString &text, qint64 ts, bool isSelf);
-    void clearFinishedTransfers();
+    void renderCard(const QString &ip, const QString &token);
+    void clearFinishedCards();
     void notifyNewMessage(const QString &who, const QString &text);
     void playNotificationSound();
 
@@ -81,14 +98,17 @@ private:
     NetworkService *m_net = nullptr;
     RemoteServer *m_remoteServer = nullptr;
 
+    QLineEdit *m_search = nullptr;
     QListWidget *m_peerList = nullptr;
+    PeerListDelegate *m_peerDelegate = nullptr;
     ChatWidget *m_chat = nullptr;
-    TransferWidget *m_transfer = nullptr;
 
-    QHash<QString, QList<ChatEntry>> m_history; // ip -> chat history
-    QHash<QString, Peer> m_peers;               // id -> peer
-    QHash<QString, FileSender *> m_senders;     // token -> sender
-    QHash<QString, FileReceiver *> m_receivers; // token -> receiver
+    QHash<QString, QList<ChatEntry>> m_history;   // ip -> chat history
+    QHash<QString, int> m_unread;                 // ip -> unseen incoming messages
+    QHash<QString, Peer> m_peers;                 // id -> peer
+    QHash<QString, FileSender *> m_senders;       // token -> sender
+    QHash<QString, FileReceiver *> m_receivers;   // token -> receiver
+    QHash<QString, QHash<QString, FileCardState>> m_fileCards; // ip -> token -> card
     QHash<QString, RemoteDialog *> m_remoteDialogs; // "ip|token" -> dialog
 
     QSystemTrayIcon *m_tray = nullptr;

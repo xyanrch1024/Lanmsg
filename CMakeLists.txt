@@ -21,7 +21,7 @@ set(SOURCES
     src/remote/RemoteServer.cpp
     src/ui/MainWindow.cpp
     src/ui/ChatWidget.cpp
-    src/ui/TransferWidget.cpp
+    src/ui/PeerListDelegate.cpp
     src/ui/RemoteDialog.cpp
     src/ui/SettingsDialog.cpp
     resources/resources.qrc
