@@ -46,8 +46,10 @@ public enum NetInfo {
 ///     changes (new Wi-Fi / VPN / IP change)
 ///   - reply once to a brand-new peer
 ///   - explicit "bye" on shutdown removes us from peers immediately
-/// No periodic keep-alive broadcast; peers are dropped only when a "bye"
-/// arrives (a crashed peer lingers until we re-announce/restart).
+///   - low-frequency keep-alive broadcast heals the peer list after a
+///     reconnect or a missed startup announce (peers are never expired, and a
+///     hello is only answered for brand-new peers, so a restarted peer would
+///     otherwise never rediscover a survivor that kept its old entry)
 /// Multicast joining is intentionally skipped on iOS (requires the App Store
 /// "multicast-networking" entitlement and is unnecessary for a single
 /// instance per device).
@@ -63,6 +65,7 @@ public final class Discovery {
     private let tcpPort: UInt16
     private var peers: [String: Peer] = [:]
     private var pathMonitor: NWPathMonitor?
+    private var keepAliveTimer: Timer?
     private var running = false
 
     public init(settings: SettingsStore, tcpPort: UInt16) {
@@ -94,10 +97,19 @@ public final class Discovery {
         running = true
         queue.async { [weak self] in self?.readLoop() }
 
-        // Announce once at startup. No periodic keep-alive. The discovery
-        // `queue` is occupied by the blocking readLoop, so broadcast from here
-        // directly (sendto is thread-safe and peers is lock-guarded).
+        // Announce once at startup. The discovery `queue` is occupied by the
+        // blocking readLoop, so broadcast from here directly (sendto is
+        // thread-safe and peers is lock-guarded).
         broadcast()
+
+        // Low-frequency keep-alive so a peer that restarts (or missed our
+        // startup announce) still rediscovers us after a reconnect. Timer runs
+        // on the main run loop: the discovery queue is blocked by readLoop.
+        let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
+            self?.broadcast()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        keepAliveTimer = timer
 
         // Re-announce when the network path changes (new Wi-Fi / VPN / IP
         // change) so the new network segment can still discover us.
@@ -113,6 +125,8 @@ public final class Discovery {
 
     public func stop() {
         running = false
+        keepAliveTimer?.invalidate()
+        keepAliveTimer = nil
         pathMonitor?.cancel()
         pathMonitor = nil
         if fd >= 0 { close(fd) }

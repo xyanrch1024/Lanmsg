@@ -9,9 +9,11 @@
 class QUdpSocket;
 class QTimer;
 
-// UDP based LAN peer discovery: announce on startup (+ when the local IP
-// changes), reply once to brand-new peers, and explicit "bye" on exit. No
-// periodic keep-alive broadcast; peers are removed only when a "bye" arrives.
+// UDP based LAN peer discovery: announce on startup, on local IP change and
+// on a low-frequency keep-alive timer; reply once to brand-new peers, and
+// explicit "bye" on exit. There is no per-peer timeout: a peer is removed only
+// when a "bye" arrives. The periodic keep-alive is what heals the peer list
+// after a reconnect or a missed startup announce (see PeerDiscovery.cpp).
 class PeerDiscovery : public QObject {
     Q_OBJECT
 public:
@@ -42,6 +44,7 @@ private:
 
     QUdpSocket *m_socket = nullptr;
     QTimer *m_netTimer = nullptr;
+    QTimer *m_keepAliveTimer = nullptr;
     QHash<QString, Peer> m_peers; // key: id
     QString m_lastLocalIp;
 };

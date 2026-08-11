@@ -23,7 +23,8 @@
 PeerDiscovery::PeerDiscovery(QObject *parent)
     : QObject(parent)
     , m_socket(new QUdpSocket(this))
-    , m_netTimer(new QTimer(this)) {
+    , m_netTimer(new QTimer(this))
+    , m_keepAliveTimer(new QTimer(this)) {
     m_socket->bind(QHostAddress::AnyIPv4, qlm::kUdpPort,
                    QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
     // Multicast lets multiple instances on the same host (which share the UDP
@@ -46,10 +47,19 @@ PeerDiscovery::PeerDiscovery(QObject *parent)
     }
     connect(m_socket, &QUdpSocket::readyRead, this, &PeerDiscovery::readPending);
 
-    // Announce once at startup. No periodic keep-alive broadcast; peers are
-    // removed when they send a "bye" (or we re-discover them).
+    // Announce once at startup, then on a low-frequency keep-alive timer.
+    // The keep-alive is what heals the peer list: peers are never expired and
+    // a "hello" is only answered for brand-new peers, so if one side restarts
+    // (or misses the other's startup announce) after a disconnect/reconnect
+    // while the other side still has its old entry, the restarting side would
+    // otherwise never learn about the surviving peer and the two lists end up
+    // asymmetric (one shows the peer, the other is empty). Periodic announces
+    // let both sides rediscover each other within one interval.
     m_lastLocalIp = localIPv4();
     announce();
+    m_keepAliveTimer->setInterval(10000);
+    connect(m_keepAliveTimer, &QTimer::timeout, this, &PeerDiscovery::announce);
+    m_keepAliveTimer->start();
 
     // Poll the local IP every few seconds; if it changed (new Wi-Fi, VPN,
     // WSL2 address shuffle) re-announce so the new network segment can see us.
